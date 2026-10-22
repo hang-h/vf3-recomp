@@ -8,7 +8,11 @@
 
 class AkiraSelection {
 public:
-    struct Player { bool human=false, selecting=false, akira=false; };
+    struct Player {
+        bool human=false, selecting=false, akira=false;
+        unsigned outfit=0; // 1=original, 2=alternate (selection cursor, before actors spawn)
+        bool preview=false;
+    };
     using Snapshot = std::array<Player,2>;
     // VF3 revision D's two character-select tasks. These are PPC byte
     // addresses: Model3 stores each 32-bit RAM word in host order.
@@ -21,7 +25,9 @@ public:
             uint32_t phase;
             std::memcpy(&phase,ram.data()+base,sizeof phase);
             const unsigned fighter=ram[(base+0x42)^3];
-            result[p]={phase!=0,phase==5,fighter==0 || fighter==13};
+            result[p]={phase!=0,phase==5,fighter==0 || fighter==13,
+                       fighter==0 ? 1u : fighter==13 ? 2u : 0u,
+                       phase==5 || phase==13 || phase==11};
         }
         return result;
     }
@@ -37,6 +43,18 @@ public:
             if (actor[p]==0) result |= 1;
             else if (actor[p]==13) result |= 2;
         }
+        return result;
+    }
+    // Selection previews exist before the two battle actors have distinct IDs.
+    // Use the cursor only during selection/confirmation, never to identify a fighter.
+    static unsigned previews(const Snapshot &state, unsigned players)
+    {
+        // A challenger's selection also shows the already-confirmed opponent.
+        if(!state[0].preview && !state[1].preview) return 0;
+        unsigned result=0;
+        for(unsigned p=0;p<2;++p)
+            if((players & (1u<<p)) && state[p].human && state[p].akira)
+                result |= state[p].outfit;
         return result;
     }
     void reset() { *this = AkiraSelection(); }

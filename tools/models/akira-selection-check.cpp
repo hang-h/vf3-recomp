@@ -37,19 +37,20 @@ int main(int argc,char **argv)
             const unsigned mask=selection.mask(state), mask2=selection.mask(state,2);
             if(mask!=previous || mask2!=previous2) {printf("frame %u: VF1 mask %u, VF2 mask %u\n",f+1,mask,mask2);previous=mask;previous2=mask2;}
         }
-        const unsigned mask=selection.mask(AkiraSelection::snapshot(board.ram));
-        const unsigned mask2=selection.mask(AkiraSelection::snapshot(board.ram),2);
+        const auto state=AkiraSelection::snapshot(board.ram);
+        const unsigned mask=selection.mask(state);
+        const unsigned mask2=selection.mask(state,2);
         if(mask2!=expected2) throw std::runtime_error("unexpected VF2 selection mask");
         if(mask!=expected) throw std::runtime_error("unexpected final player selection mask");
         video::Scene original;builder.build(board,original);
         auto changed=original;
-        const size_t count=appearance.apply(changed,AkiraSelection::outfits(board.ram,mask));
+        const size_t count=appearance.apply(changed,AkiraSelection::outfits(board.ram,mask),AkiraSelection::previews(state,mask));
         if(count!=expected_models) throw std::runtime_error("unexpected per-player replacement count");
         const auto vf1_scene=changed;
-        const size_t count2=second.apply(changed,AkiraSelection::outfits(board.ram,mask2));
+        const size_t count2=second.apply(changed,AkiraSelection::outfits(board.ram,mask2),AkiraSelection::previews(state,mask2));
         if(count2!=expected_models2) throw std::runtime_error("unexpected VF2 replacement count");
-        const unsigned vf1_outfits=AkiraSelection::outfits(board.ram,mask);
-        const unsigned outfits=vf1_outfits | AkiraSelection::outfits(board.ram,mask2);
+        const unsigned vf1_outfits=AkiraSelection::outfits(board.ram,mask)|AkiraSelection::previews(state,mask);
+        const unsigned outfits=vf1_outfits | AkiraSelection::outfits(board.ram,mask2)|AkiraSelection::previews(state,mask2);
         for(size_t v=0;v<original.viewports.size();++v)
             for(size_t m=0;m<original.viewports[v].models.size();++m) {
                 const auto &a=original.viewports[v].models[m], &b=changed.viewports[v].models[m];

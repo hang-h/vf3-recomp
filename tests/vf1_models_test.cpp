@@ -20,6 +20,8 @@ bool equal_mesh(const vf1_models::Mesh &a,const vf1_models::Mesh &b)
 }
 bool equal(const vf1_models::Assets &a, const vf1_models::Assets &b)
 {
+    if(a.portrait.width!=b.portrait.width || a.portrait.height!=b.portrait.height ||
+       a.portrait.pixels!=b.portrait.pixels)return false;
     for(size_t part=0;part<a.parts.size();++part)if(!equal_mesh(a.parts[part],b.parts[part]))return false;
     for(size_t side=0;side<2;++side)for(size_t pose=0;pose<32;++pose)
         if(!equal_mesh(a.hands[side][pose],b.hands[side][pose]))return false;
@@ -46,6 +48,14 @@ int main(int argc, char **argv)
         vf1_models::Assets models;
         std::string error;
         require(vf1_models::load(argv[1], models, error), "decode: " + error);
+        require(models.portrait.available() && models.portrait.width==56 && models.portrait.height==64,
+                "missing original VF1 select portrait");
+        bool coloured=false;
+        for(uint32_t p:models.portrait.pixels) {
+            require((p>>24)==255,"nonopaque VF1 portrait pixel");
+            if(((p>>16)&255)!=(p&255))coloured=true;
+        }
+        require(coloured,"VF1 portrait lost its palette");
         size_t total = 0;
         for (const auto &part : models.parts) {
             require(!part.empty(), "missing Akira part");

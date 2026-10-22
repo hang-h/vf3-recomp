@@ -104,6 +104,7 @@
 #include "../video/vf1_akira.h"
 #include "../video/vf2_akira.h"
 #include "akira_selection.h"
+#include "akira_portrait.h"
 #include "../video/r3d_raster.h"
 #include "../video/parallel.h"
 #include "png.h"
@@ -900,8 +901,10 @@ struct Game
 		const auto selection = AkiraSelection::snapshot(board.ram);
 		const unsigned next_mask = force_vf2_akira ? 0 : force_vf1_akira ? 3 : akira_selection.mask(selection,1);
 		const unsigned next_vf2_mask = force_vf2_akira ? 3 : force_vf1_akira ? 0 : akira_selection.mask(selection,2);
-		vf1_akira.apply(scene[newest], force_vf1_akira ? 3 : AkiraSelection::outfits(board.ram, next_mask));
-		vf2_akira.apply(scene[newest], force_vf2_akira ? 3 : AkiraSelection::outfits(board.ram, next_vf2_mask));
+		vf1_akira.apply(scene[newest], force_vf1_akira ? 3 : AkiraSelection::outfits(board.ram, next_mask),
+		                AkiraSelection::previews(selection, next_mask));
+		vf2_akira.apply(scene[newest], force_vf2_akira ? 3 : AkiraSelection::outfits(board.ram, next_vf2_mask),
+		                AkiraSelection::previews(selection, next_vf2_mask));
 		have_prev = frame > 1 && appearance_mask == next_mask && vf2_appearance_mask == next_vf2_mask;
 		if (vf2_appearance_mask != next_vf2_mask) fprintf(stderr, "VF2 Akira selection: player mask %u\n", next_vf2_mask);
 		vf2_appearance_mask = next_vf2_mask;
@@ -911,6 +914,12 @@ struct Game
 		if (vf1_akira.ready() || vf2_akira.ready()) for (unsigned p=0;p<2;++p)
 			if (selection[p].human && selection[p].selecting && selection[p].akira) selection_hint_mask |= 1u<<p;
 		tiles.aligned(below, above);
+		// The roster is shared by both players. The player currently choosing
+		// supplies its Akira icon; the native border/highlight stays untouched.
+		for(unsigned p=0;p<2;++p) if(selection[p].human && selection[p].preview && selection[p].akira) {
+		    if(next_mask & (1u<<p)) akira_portrait::draw(above,video::W,video::H,vf1_akira.portrait());
+		    else if(next_vf2_mask & (1u<<p)) akira_portrait::draw(above,video::W,video::H,vf2_akira.portrait());
+		}
 		tiles.aligned_wide(below_wide);
 		bg_moved = video::TileGen::scrolled(prev_scroll, tiles.scroll, prev_below, below, bg_dx, bg_dy) && have_prev;
 		prev_scroll = tiles.scroll;

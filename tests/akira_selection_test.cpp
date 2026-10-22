@@ -11,6 +11,19 @@ int main()
     ram[0x1080c2^3]=13;
     const auto sampled=AkiraSelection::snapshot(ram);
     assert(!sampled[0].human && sampled[1].human && sampled[1].selecting && sampled[1].akira);
+    assert(sampled[1].outfit==2 && sampled[1].preview);
+    assert(AkiraSelection::previews(sampled,2)==2 && AkiraSelection::previews(sampled,1)==0);
+    for(uint32_t confirmation:{13u,11u}) {
+        std::memcpy(ram.data()+0x108080,&confirmation,4);
+        const auto preview=AkiraSelection::snapshot(ram);
+        assert(!preview[1].selecting && AkiraSelection::previews(preview,2)==2);
+    }
+    auto challenger=sampled;
+    challenger[0]={true,false,true,1,false};
+    assert(AkiraSelection::previews(challenger,3)==3); // confirmed P1 still has a preview
+    const uint32_t fighting=10;
+    std::memcpy(ram.data()+0x108080,&fighting,4);
+    assert(AkiraSelection::previews(AkiraSelection::snapshot(ram),2)==0);
     ram[0x1087f0^3]=0; ram[0x10a7f0^3]=13;
     assert(AkiraSelection::outfits(ram,1)==1 && AkiraSelection::outfits(ram,2)==2);
     ram[0x1087f0^3]=13; ram[0x10a7f0^3]=0; // swapped costumes

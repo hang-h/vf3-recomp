@@ -187,6 +187,29 @@ bool load(const std::string &path, Assets &out, std::string &error)
         }
         if (prepared.strands[0].bone != 2 || prepared.strands[1].bone != 9 || prepared.strands[2].bone != 9)
             throw std::runtime_error("unsupported Akira strand attachments");
+        // Original select artwork: seven by eight 4bpp tiles, with the updated
+        // Akira byte-indexed map and its palette in the descriptor ROM.
+        constexpr uint32_t map=0x2ff5ec,graphics=0x2fef8c,palette=0x2ff5cc;
+        if(d.word(map)!=0xb080 || d.word(map+4)!=8 || d.word(map+8)!=7)
+            throw std::runtime_error("unsupported Akira portrait map");
+        auto &portrait=prepared.portrait;
+        portrait.width=56;portrait.height=64;portrait.pixels.resize(56*64);
+        for(unsigned y=0;y<64;++y)for(unsigned x=0;x<56;++x) {
+            const unsigned tile=*d.main_bytes(map+12+(y/8)*7+x/8,1);
+            if(tile>=50)throw std::runtime_error("invalid Akira portrait tile");
+            const auto *row=d.main_bytes(graphics+tile*32+(y%8)*4,4);
+            const uint32_t packed=(uint32_t(rom_zip::le16(row))<<16)|rom_zip::le16(row+2);
+            const unsigned pen=(packed>>(28-4*(x%8)))&15;
+            const auto bgr=rom_zip::le16(d.main_bytes(palette+pen*2,2));
+            uint32_t rgb=0xff000000;
+            for(unsigned axis=0;axis<3;++axis) {
+                const unsigned value=(bgr>>(axis*5))&31;
+                unsigned channel=(value<<3)|(value>>2);
+                if(!(bgr&0x8000))channel>>=1;
+                rgb|=channel<<(16-axis*8);
+            }
+            portrait.pixels[y*56+x]=rgb;
+        }
         out = std::move(prepared);
         error.clear();
         return true;

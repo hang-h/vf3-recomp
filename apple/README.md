@@ -69,8 +69,8 @@ Only appearance changes; VF3 supplies the moves, game rules and shadows. VF1 and
 VF2 bodies, hands, headband ribbons and belts are decoded from their respective
 ROMs. Finger poses and ribbon motion are approximated from VF3, and belt tails
 have no separate cloth simulation. The face stays neutral. Both VF3 outfits use
-the selected game's P1 appearance. The selection portrait remains VF3; the
-recognised full fighter changes in the match. See [model notes](../tools/models/README.md)
+the selected game's P1 appearance. The selection screen shows that game's 3D
+head and original ROM portrait, and victory close-ups keep the selected appearance. See [model notes](../tools/models/README.md)
 for texture/lighting limitations and local verification commands.
 No ROM or extracted model data is distributed with the app.
 For diagnostics, `--vf1-akira` or `--vf2-akira` forces that appearance for all

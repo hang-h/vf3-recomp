@@ -21,9 +21,11 @@ two five-segment ribbons are fitted to VF3's three cloth bones. VF1 belt tails
 follow the pelvis; VF2's two two-segment belt tails follow the torso, without
 separate cloth physics. Faces use neutral source poses, without VF3 expressions.
 Both VF3 outfits use the same source game's P1 Akira geometry and palette.
-Incomplete/ambiguous skeleton layouts stay original. The selection screen keeps
-VF3's portrait and shows the chosen appearance in a label; the recognised full
-fighter changes in the match. Physical-device rendering and all stages/animations
+Unknown/ambiguous skeleton layouts stay original. Visible, recognised limbs are
+replaced even when the camera culls the feet in a victory close-up. The selection
+screen changes both the 3D head and the original ROM portrait in the Akira roster
+cell, and shows the chosen appearance in a label. The tall source portraits are
+fitted into VF3's landscape cell without stretching. Physical-device rendering and all stages/animations
 have not been exhaustively verified.
 
 ## Implementation and evidence
@@ -64,7 +66,12 @@ have not been exhaustively verified.
   VF1 local X is fitted to these lengths. Model 1 local Z is reversed; head
   scale/offset are calibrated separately. Original bridge polygons and extra
   alternate-outfit cloth are suppressed; neither emulated memory nor gameplay
-  code is patched. An incomplete/ambiguous binding leaves the fighter untouched.
+  code is patched. An unknown/ambiguous or misplaced binding leaves the fighter untouched.
+  Off-screen parts may be absent; every present part must retain its expected
+  node and matrix offset. This avoids reverting to VF3 in victory close-ups.
+  Head-only selection layouts require an explicit preview mask from the host.
+  They use the original/alternate head and cloth nodes at offsets +4/+6/+8,
+  independently of the battle actor IDs, which are not yet assigned at selection.
 - `src/host/akira_selection.h` reads revision D's per-player task at
   `0x108000 + player * 0x80`: phase 5 is unlocked selection, fighter byte +0x42
   identifies Akira (0 or 13). Up is consumed only while choosing Akira; Down
@@ -74,6 +81,13 @@ have not been exhaustively verified.
   identities remain original. Appearance changes clear frame interpolation.
   The host publishes selection hints with the rendered frame, avoiding concurrent
   reads of emulated RAM from the UI.
+
+- Source portraits are decoded directly from the companion ROMs: VF1's 56×64
+  map at `0x2ff5ec`, tiles at `0x2fef8c`, palette at `0x2ff5cc`; VF2's 48×88
+  map at main-data `0xa712fc` (row stride 124), tiles at `0x84f4d4`, palette at
+  `0x800ee0`. VF2's 63 tiles, 66 map entries and 16 palette entries matched the
+  native selection screen's RAM. `akira_portrait.h` composites only the selected
+  roster cell into the host's upper picture layer; emulated tile RAM is untouched.
 
 The earlier REA MCP archive inspection established the VF3 ZIP identity and
 member inventory, not the anatomy mapping. Retained local bundle:
@@ -97,7 +111,7 @@ No probe output or extracted ROM data is required or shipped at runtime.
 From the repository root, with a C++20 compiler and zlib:
 
 ```sh
-make -j4 build/bin/vf1-models-test build/bin/vf2-models-test build/bin/akira-check build/bin/akira-selection-test build/bin/akira-selection-check
+make -j4 build/bin/vf1-models-test build/bin/vf2-models-test build/bin/akira-check build/bin/akira-selection-test build/bin/akira-selection-check build/bin/akira-layout-check
 build/bin/akira-selection-test
 build/bin/vf1-models-test /path/to/vf.zip
 build/bin/vf2-models-test /path/to/vf2.zip
@@ -114,6 +128,23 @@ build/bin/akira-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-attack
 build/bin/akira-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-p2.txt build/akira-p2 2400
 build/bin/akira-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-mirror.txt build/akira-mirror 3500 2
 ```
+
+Victory/preview regressions use `akira-layout-check`:
+
+```sh
+build/bin/akira-layout-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-select-vf1.txt build/akira-preview 1580 1700 1 1
+build/bin/akira-layout-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-victory.txt build/akira-victory 9340 9560 1 0
+```
+
+The victory test reproduces the camera-culling failure: at frame 9360 the left
+foot is absent, although the selected player/outfit remains unchanged. Twelve
+victory frames and eleven P1/P2 preview frames passed, plus four simultaneous
+head-preview frames. A mixed VF1/VF2 challenger selection also keeps the already
+confirmed P1 appearance. The normal-fight VF1
+frame-2400 image remained byte-identical. Final Mac Metal captures cover the
+VF1/VF2/VF3 preview cycle; iOS simulator verification covers the VF2 preview.
+Evidence is retained locally under `build/akira-victory`, `build/akira-portraits`
+and `build/akira-lifecycle`.
 
 The decoder check covers valid load, missing/malformed/CRC-damaged ZIPs and
 transactional reload, all 64 hand poses and the ribbon/belt chains. The selection

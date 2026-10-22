@@ -13,11 +13,13 @@ public:
     bool load(const std::string &zip, std::string &error);
     bool load_assets(const vf1_models::Assets &assets, AkiraSource source, std::string &error);
     bool ready() const { return bool(parts[0]); }
+    const vf1_models::Portrait &portrait() const { return source_portrait; }
     bool enabled = false;
-    // Number of fully recognised Akira skeletons replaced. Unsupported layouts
+    // Number of recognised visible Akiras replaced. Unsupported layouts
     // are left intact; this never writes emulated memory or changes gameplay.
     // Bits select the original/alternate outfit; the host resolves player ownership.
-    size_t apply(Scene &scene, unsigned outfit_mask = 3) const;
+    // Head-only selection scenes require preview_mask from the selection state.
+    size_t apply(Scene &scene, unsigned outfit_mask = 3, unsigned preview_mask = 0) const;
 private:
     std::array<Meshes, size_t(vf1_models::Part::Count)> parts;
     std::array<std::array<Meshes,32>,2> hands;
@@ -27,5 +29,6 @@ private:
     std::array<bool,2> replace_hands{};
     bool replace_ribbon=false, replace_belt=false;
     bool model2_source=false;
+    vf1_models::Portrait source_portrait;
 };
 }

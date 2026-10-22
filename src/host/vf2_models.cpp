@@ -191,6 +191,24 @@ bool load(const std::string &path,vf1_models::Assets &out,std::string &error) {
         strand(next.extra_head_ribbons[0],2,0x67bd8,0x67d6c,5);
         strand(next.strands[1],1,0x67a98,0x67ac0,2);
         strand(next.strands[2],1,0x67b38,0x67b60,2);
+        // Original manga-style select icon. The six-by-eleven tile image is
+        // embedded in a 62-column map; graphics and BGR555 palette are raw ROM.
+        auto &portrait=next.portrait;
+        portrait.width=48;portrait.height=88;portrait.pixels.resize(48*88);
+        for(unsigned y=0;y<88;++y)for(unsigned x=0;x<48;++x) {
+            const unsigned entry=d.half(Main,0xa712fc+(y/8)*124+(x/8)*2);
+            if(entry<0x2a80 || entry>0x2abe)throw std::runtime_error("invalid VF2 Akira portrait tile");
+            const size_t row=0x84f4d4+(entry-0x2a80)*32+(y%8)*4;
+            const uint32_t packed=(uint32_t(d.half(Main,row))<<16)|d.half(Main,row+2);
+            const unsigned pen=(packed>>(28-4*(x%8)))&15;
+            const auto bgr=d.half(Main,0x800ee0+pen*2);
+            uint32_t rgb=0xff000000;
+            for(unsigned axis=0;axis<3;++axis) {
+                const unsigned value=(bgr>>(axis*5))&31;
+                rgb|=((value<<3)|(value>>2))<<(16-axis*8);
+            }
+            portrait.pixels[y*48+x]=rgb;
+        }
         out=std::move(next);error.clear();return true;
     } catch(const std::exception &e) {error=e.what();return false;}
 }

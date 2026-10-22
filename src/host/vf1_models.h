@@ -23,12 +23,18 @@ struct Strand {
     std::vector<Mesh> segments = std::vector<Mesh>(3);
     std::vector<float> lengths = std::vector<float>(3);
 };
+struct Portrait {
+    unsigned width = 0, height = 0;
+    std::vector<uint32_t> pixels; // opaque 0xAARRGGBB, native artwork dimensions
+    bool available() const { return width && height && pixels.size() == size_t(width) * height; }
+};
 struct Assets {
     std::array<Mesh, size_t(Part::Count)> parts;
     std::array<std::array<Mesh, 32>, 2> hands; // A (+0x22), B (+0x2e), closed to open
     Mesh belt_knot;
     std::array<Strand, 3> strands; // headband ribbon, two belt tails
     std::vector<Strand> extra_head_ribbons; // VF2 has a second, five-segment ribbon
+    Portrait portrait;
 };
 // Size/CRC-validated, no extracted files or cache; failure leaves out unchanged.
 // Only the original P1 Akira neutral face is decoded here, with no VF2 fitting.

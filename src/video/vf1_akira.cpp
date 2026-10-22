@@ -184,12 +184,13 @@ bool Vf1Akira::load_assets(const vf1_models::Assets &assets, AkiraSource source,
     unit_scale=units;head_z_scale=model2 ? -units : -1800;head_z_offset=model2 ? 0 : -13;
     mesh_key_base=key_base;replace_hands=has_hands;replace_ribbon=has_ribbon;replace_belt=has_belt;
     model2_source=model2;
+    source_portrait=assets.portrait;
     error.clear();return true;
 }
 
-size_t Vf1Akira::apply(Scene &scene, unsigned outfit_mask) const
+size_t Vf1Akira::apply(Scene &scene, unsigned outfit_mask, unsigned preview_mask) const
 {
-    if (!enabled || !ready() || !(outfit_mask & 3)) return 0;
+    if (!enabled || !ready() || !((outfit_mask|preview_mask) & 3)) return 0;
     static const Meshes empty = std::make_shared<std::vector<Mesh>>();
     size_t replaced=0;
     // Some stages split each fighter across a dozen lighting viewports. Keep
@@ -197,21 +198,26 @@ size_t Vf1Akira::apply(Scene &scene, unsigned outfit_mask) const
     for (auto &head_vp : scene.viewports) for (auto &head : head_vp.models) {
         const int outfit = head.addr==0x9aaccf && head.source_node==0x509a0 ? 0 :
             head.addr==0xa47386 && head.source_node==0x51e58 ? 1 : -1;
-        if (outfit < 0 || !(outfit_mask & (1u << outfit))) continue;
+        if (outfit < 0 || !((outfit_mask|preview_mask) & (1u << outfit))) continue;
         const int base=head.matrix_index;
         auto same_camera = [&](const Viewport &vp) {
             return vp.matrix_table==head_vp.matrix_table && vp.root_matrix==head_vp.root_matrix &&
                 !std::memcmp(vp.root.m,head_vp.root.m,sizeof vp.root.m);
         };
         std::array<Model *,size_t(Part::Count)> found{};
-        bool ambiguous=false;
+        bool ambiguous=false, misplaced=false;
         for (auto &vp : scene.viewports) if (same_camera(vp))
             for (auto &m : vp.models) for (const auto &b : bindings)
-                if (m.source_node==(outfit ? b.alternate : b.node) &&
-                    int(m.matrix_index)==base+(outfit && b.part==Part::Torso ? -4 : b.slot)) {
+                if (m.source_node==(outfit ? b.alternate : b.node)) {
+                    if(int(m.matrix_index)!=base+(outfit && b.part==Part::Torso ? -4 : b.slot)) { misplaced=true;continue; }
                     auto &p=found[size_t(b.part)]; if (p) ambiguous=true; p=&m;
                 }
-        if (ambiguous || std::any_of(found.begin(),found.end(),[](const auto *p){return !p;})) continue;
+        if (ambiguous || misplaced || found[size_t(Part::Head)]!=&head) continue;
+        const size_t present=std::count_if(found.begin(),found.end(),[](const auto *p){return p;});
+        const bool preview=present==1 && (preview_mask & (1u<<outfit));
+        // Off-screen feet/limbs are absent from the scene, including the victory
+        // close-up. Validate every visible binding rather than requiring all 13.
+        if ((!preview && (!(outfit_mask & (1u<<outfit)) || present<2))) continue;
         std::array<Model *,2> wrists{};
         std::array<std::array<Model *,4>,2> fingers{};
         std::array<Model *,3> tail{};
@@ -222,14 +228,15 @@ size_t Vf1Akira::apply(Scene &scene, unsigned outfit_mask) const
                 if(slot==33+side*24 && m.source_node==wrist_nodes[outfit][side])wrists[side]=&m;
                 for(int finger=0;finger<4;++finger)if(slot==39+side*24+finger*3)fingers[side][finger]=&m;
             }
-            for(int segment=0;segment<3;++segment)if(slot==11+segment*2 &&
+            for(int segment=0;segment<3;++segment)if(slot==(preview ? 4 : 11)+segment*2 &&
                 m.source_node==(outfit ? 0x76fb0u+segment*8 : 0x512b0u+segment*8))tail[segment]=&m;
         }
         Mat4 head_inverse;
-        if(!wrists[0] || !wrists[1] || std::any_of(tail.begin(),tail.end(),[](const auto *p){return !p;}) ||
-            !inverse(head.matrix,head_inverse))continue;
+        const bool ribbon_visible=std::all_of(tail.begin(),tail.end(),[](const auto *p){return p;});
+        if((preview && !ribbon_visible) || !inverse(head.matrix,head_inverse))continue;
         std::array<unsigned,2> poses{};
         for(int side=0;side<2;++side) {
+            if(!wrists[side])continue;
             const auto direction=axis(wrists[side]->matrix,0);float openness=0;unsigned count=0;
             for(const auto *finger:fingers[side])if(finger) {
                 const auto tip=axis(finger->matrix,0);
@@ -250,7 +257,7 @@ size_t Vf1Akira::apply(Scene &scene, unsigned outfit_mask) const
             if(length>1e-8f)for(float &x:local)x/=length;
             return local;
         };
-        if(replace_ribbon)for(size_t chain=0;chain<ribbons.size();++chain) {
+        if(replace_ribbon && ribbon_visible)for(size_t chain=0;chain<ribbons.size();++chain) {
           const auto &ribbon=ribbons[chain];
           Point anchor={ribbon.anchor[0]*unit_scale,ribbon.anchor[1]*unit_scale,
               ribbon.anchor[2]*head_z_scale+head_z_offset};
@@ -280,15 +287,17 @@ size_t Vf1Akira::apply(Scene &scene, unsigned outfit_mask) const
             // Original face, eye spheres and headband tails. Shadow meshes
             // use separate slots (+1 etc.) and remain the game's shadows.
             const bool original_belt=m.source_node==(outfit ? 0x430d8u : 0x42f58u) || m.source_node==(outfit ? 0x430c8u : 0x42f48u);
-            if (slot==0 || (slot>=2 && slot<=8) || (replace_ribbon && slot>=9 && slot<=25) ||
-                (replace_hands[0] && slot>=34 && slot<=48) || (replace_hands[1] && slot>=58 && slot<=72) ||
+            if (slot==0 || (slot>=2 && slot<=(preview ? 3 : 8)) ||
+                (replace_ribbon && ribbon_visible && slot>=(preview ? 4 : 9) && slot<=(preview ? 17 : 25)) ||
+                (!preview && replace_hands[0] && wrists[0] && slot>=34 && slot<=48) ||
+                (!preview && replace_hands[1] && wrists[1] && slot>=58 && slot<=72) ||
                 (m.source_node && (!original_belt || replace_belt) &&
                     std::find(std::begin(bridges[outfit]),std::end(bridges[outfit]),m.source_node)!=std::end(bridges[outfit])))
                 m.meshes=empty;
         }
-        for (size_t i=0;i<found.size();++i) found[i]->meshes=parts[i];
+        for (size_t i=0;i<found.size();++i) if(found[i])found[i]->meshes=parts[i];
         found[size_t(Part::Head)]->meshes=std::move(head_with_ribbon);
-        for(size_t side=0;side<2;++side)if(replace_hands[side])wrists[side]->meshes=hands[side][poses[side]];
+        for(size_t side=0;side<2;++side)if(replace_hands[side] && wrists[side])wrists[side]->meshes=hands[side][poses[side]];
         ++replaced;
     }
     return replaced;
