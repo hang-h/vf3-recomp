@@ -41,8 +41,17 @@ have not been exhaustively verified.
   probes passed. This establishes the texture data, not pixel-identical rendering.
   For the shared flat-colour mesh path, UV faces are adaptively subdivided to
   depth three for the face/accessories, two for the body and one for the 64
-  cached hand poses, then sampled and stripped of transparent samples. The
-  resulting body has 39,631 triangles and each hand pose has 760 triangles.
+  cached hand poses, then sampled and stripped of transparent samples. Eye and
+  mouth cutouts use a finer grid (0.75-texel target, at most five levels) so thin
+  pupils and lips cannot disappear between otherwise uniform colour samples.
+  The resulting body has 51,962 triangles and each hand pose has 760 triangles.
+  These cutouts are coplanar with skin in the original head. Model 2's painter
+  order preserves them, but Real3D's depth buffer and colour batching do not.
+  Only head descriptor `0x19c`, alpha-cutout palettes 1/2 are lifted outward by
+  0.0002 source units (0.4096 destination units), opposite the inward ROM normal.
+  Skin, hair, limbs and VF1 geometry retain their existing coordinates.
+  The imported VF2 head still uses its neutral expression; the game's changing
+  expression aliases are not yet mapped to VF3 facial animation.
   Fine texture edges are therefore approximate. Colours use ROM luma/colour
   curves with a fixed native first-fight palette environment (offset 64, slope
   37, gain 128 and special-curve LUT offset -52), followed by VF3 lighting;

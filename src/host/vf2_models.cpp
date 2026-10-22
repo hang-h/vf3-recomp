@@ -100,7 +100,7 @@ struct Decoder {
         if(out.size()>100000) throw std::runtime_error("oversized VF2 model");
     }
     void face(Mesh &out,const std::array<uint16_t,4> &h,const Point &a,const Point &b,const Point &c,
-              const UV &ua,const UV &ub,const UV &uc,unsigned depth,unsigned limit) const {
+              const UV &ua,const UV &ub,const UV &uc,unsigned depth,unsigned limit,bool detail=false) const {
         const UV center={(ua[0]+ub[0]+uc[0])/3,(ua[1]+ub[1]+uc[1])/3};
         const auto rgb=colour(h,center);
         float extent=0;
@@ -111,12 +111,14 @@ struct Decoder {
             if((sample>>24)!=(rgb>>24))varies=true;
             for(unsigned shift:{0,8,16})if(std::abs(int((sample>>shift)&255)-int((rgb>>shift)&255))>12)varies=true;
         }
-        if(depth<limit && extent>3 && varies) {
+        // Do not let equal corner/centre samples hide a thin pupil or lip.
+        // Facial cutouts need a texel-sized grid even on apparently flat cells.
+        if(depth<limit && extent>(detail ? .75f : 3.0f) && (detail || varies)) {
             Point ab,bc,ca;UV uab,ubc,uca;
             for(unsigned k=0;k<3;++k) {ab[k]=(a[k]+b[k])/2;bc[k]=(b[k]+c[k])/2;ca[k]=(c[k]+a[k])/2;}
             for(unsigned k=0;k<2;++k) {uab[k]=(ua[k]+ub[k])/2;ubc[k]=(ub[k]+uc[k])/2;uca[k]=(uc[k]+ua[k])/2;}
-            face(out,h,a,ab,ca,ua,uab,uca,depth+1,limit);face(out,h,ab,b,bc,uab,ub,ubc,depth+1,limit);
-            face(out,h,ca,bc,c,uca,ubc,uc,depth+1,limit);face(out,h,ab,bc,ca,uab,ubc,uca,depth+1,limit);
+            face(out,h,a,ab,ca,ua,uab,uca,depth+1,limit,detail);face(out,h,ab,b,bc,uab,ub,ubc,depth+1,limit,detail);
+            face(out,h,ca,bc,c,uca,ubc,uc,depth+1,limit,detail);face(out,h,ab,bc,ca,uab,ubc,uca,depth+1,limit,detail);
         } else if(rgb>>24)triangle(out,rgb,a,b,c);
     }
     Mesh part(unsigned descriptor,unsigned subdivision=2) const {
@@ -142,8 +144,22 @@ struct Decoder {
             if(delta<0 && tha<size_t(-delta*4)) throw std::runtime_error("invalid VF2 texture header link");
             tha+=delta*4;
             if(link) {
-                face(out,h,old1,old0,a,uv[0],uv[1],uv[2],0,subdivision);
-                if(type&1)face(out,h,old1,a,b,uv[0],uv[2],uv[3],0,subdivision);
+                // Model 2 draws the alpha-cutout facial details over coplanar
+                // skin in painter order. Real3D uses a depth buffer, and RGB
+                // batching otherwise lets the skin overwrite eyes and lips.
+                // Its source normals point inward; lift only the head decals
+                // by 0.41 destination units, leaving the strip itself intact.
+                const Point normal=vertex(at+4);
+                const unsigned palette=(h[3]>>6)&1023;
+                const bool detail=descriptor==0x19c && (h[0]&0x2000) && (palette==1 || palette==2);
+                auto surface=[&](Point p) {
+                    if(detail)
+                        for(unsigned k=0;k<3;++k)p[k]-=.0002f*normal[k];
+                    return p;
+                };
+                const unsigned limit=detail ? 5 : subdivision;
+                face(out,h,surface(old1),surface(old0),surface(a),uv[0],uv[1],uv[2],0,limit,detail);
+                if(type&1)face(out,h,surface(old1),surface(a),surface(b),uv[0],uv[2],uv[3],0,limit,detail);
             }
             if(link==0 || link==2) {old0=a;old1=b;}
             else if(link==1)old1=a;
@@ -171,8 +187,8 @@ bool load(const std::string &path,vf1_models::Assets &out,std::string &error) {
         d.sheet=detail::TextureDecoder(d.regions[Main]).akiraSheet();
         vf1_models::Assets next;
         constexpr unsigned body[]={0x996,0x994,0x19e,0x1a6,0x19d,0x1a5,0x1a1,0x19b,0x198,0x1a0,0x19a,0x197,0x19c};
-        // Bound cached geometry: the face gets three subdivision levels, body
-        // surfaces two, and the 64 independently cached hand poses one.
+        // Bound cached geometry: the head gets three subdivision levels (five
+        // for its eye/mouth cutouts), body surfaces two, and cached hands one.
         for(size_t i=0;i<next.parts.size();++i)next.parts[i]=d.part(body[i],i==size_t(vf1_models::Part::Head)?3:2);
         for(unsigned hand=0;hand<2;++hand)for(unsigned pose=0;pose<32;++pose)
             next.hands[hand][pose]=d.part(d.word(Main,(hand?0x1088:0xf08)+(31-pose)*4),1);
