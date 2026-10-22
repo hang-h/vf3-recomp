@@ -70,6 +70,14 @@ $(BIN)/akira-check: $(call objs,$(CORE) src/host/vf1_models.cpp src/video/vf1_ak
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
+$(BIN)/akira-selection-check: $(call objs,$(CORE) src/host/vf1_models.cpp src/video/vf1_akira.cpp tools/models/akira-selection-check.cpp) $(SLJIT_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+
+$(BIN)/akira-selection-test: $(call objs,tests/akira_selection_test.cpp)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@
+
 $(BIN)/vf1-models-test: $(call objs,src/host/vf1_models.cpp tests/vf1_models_test.cpp)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)

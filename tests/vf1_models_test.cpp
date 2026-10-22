@@ -12,13 +12,22 @@ void require(bool ok, const std::string &message)
 {
     if (!ok) throw std::runtime_error(message);
 }
+bool equal_mesh(const vf1_models::Mesh &a,const vf1_models::Mesh &b)
+{
+    if(a.size()!=b.size())return false;
+    for(size_t i=0;i<a.size();++i)if(a[i].colour!=b[i].colour || a[i].points!=b[i].points)return false;
+    return true;
+}
 bool equal(const vf1_models::Assets &a, const vf1_models::Assets &b)
 {
-    for (size_t part = 0; part < a.parts.size(); ++part) {
-        if (a.parts[part].size() != b.parts[part].size()) return false;
-        for (size_t i = 0; i < a.parts[part].size(); ++i)
-            if (a.parts[part][i].colour != b.parts[part][i].colour ||
-                a.parts[part][i].points != b.parts[part][i].points) return false;
+    for(size_t part=0;part<a.parts.size();++part)if(!equal_mesh(a.parts[part],b.parts[part]))return false;
+    for(size_t side=0;side<2;++side)for(size_t pose=0;pose<32;++pose)
+        if(!equal_mesh(a.hands[side][pose],b.hands[side][pose]))return false;
+    if(!equal_mesh(a.belt_knot,b.belt_knot))return false;
+    for(size_t chain=0;chain<3;++chain) {
+        const auto &x=a.strands[chain],&y=b.strands[chain];
+        if(x.bone!=y.bone || x.anchor!=y.anchor || x.lengths!=y.lengths)return false;
+        for(size_t segment=0;segment<3;++segment)if(!equal_mesh(x.segments[segment],y.segments[segment]))return false;
     }
     return true;
 }
@@ -46,6 +55,18 @@ int main(int argc, char **argv)
                 for (const auto &point : triangle.points) for (float coordinate : point)
                     require(std::isfinite(coordinate), "non-finite source vertex");
             }
+        }
+        for(size_t side=0;side<2;++side) {
+            for(const auto &hand:models.hands[side])require(hand.size()==270,"incomplete hand pose");
+            require(!equal_mesh(models.hands[side][0],models.hands[side][31]),"hand poses collapsed");
+        }
+        require(models.belt_knot.size()==12,"belt knot missing");
+        require(models.strands[0].bone==2 && models.strands[1].bone==9 && models.strands[2].bone==9,
+                "incorrect accessory attachment bones");
+        for(size_t chain=0;chain<3;++chain)for(size_t segment=0;segment<3;++segment) {
+            const auto &strand=models.strands[chain];
+            require(strand.segments[segment].size()==(chain && segment==1 ? 88 : 4),"incomplete strand segment");
+            require(std::abs(strand.lengths[segment]-.1f)<1e-6f,"incorrect strand length");
         }
         const auto reference = models;
         temp_folder temp;
@@ -76,7 +97,7 @@ int main(int argc, char **argv)
         require(vf1_models::load(argv[1], models, error) && error.empty() && equal(models, reference),
                 "repeat load differs or retains error");
         std::cout << models.parts.size() << " unscaled Akira parts, " << total
-                  << " triangles; missing, malformed, CRC damage, and transactional reload checks passed.\n";
+                  << " triangles, 64 hand poses, knot and 3 strands; missing, malformed, CRC damage, and transactional reload checks passed.\n";
         return 0;
     } catch (const std::exception &e) {
         std::cerr << e.what() << '\n';

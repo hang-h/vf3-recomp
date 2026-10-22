@@ -17,8 +17,17 @@ struct Triangle {
     std::array<std::array<float, 3>, 3> points;
 };
 using Mesh = std::vector<Triangle>;
+struct Strand {
+    uint8_t bone = 0;
+    std::array<float, 3> anchor{};
+    std::array<Mesh, 3> segments;
+    std::array<float, 3> lengths{};
+};
 struct Assets {
     std::array<Mesh, size_t(Part::Count)> parts;
+    std::array<std::array<Mesh, 32>, 2> hands; // A (+0x22), B (+0x2e), closed to open
+    Mesh belt_knot;
+    std::array<Strand, 3> strands; // headband ribbon, two belt tails
 };
 // Size/CRC-validated, no extracted files or cache; failure leaves out unchanged.
 // Only the original P1 Akira neutral face is decoded here, with no VF2 fitting.

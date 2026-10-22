@@ -1,0 +1,11 @@
+1310 press p1.coin
+1330 press p1.coin
+1390 press p2.start
+1580 press p2.left 4
+1640 press p2.left 4
+1700 press p2.left 4
+1760 press p2.left 4
+1820 press p2.left 4
+1860 press p2.up 6
+1900 press p2.punch
+2200 hold p2.guard

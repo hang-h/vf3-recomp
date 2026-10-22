@@ -147,6 +147,46 @@ bool load(const std::string &path, Assets &out, std::string &error)
         auto &head = prepared.parts[size_t(Part::Head)];
         for (unsigned part = 0; part < 9; ++part)
             d.part(head, d.word(d.word(lists + 4 * part) + 4 * frames[part]));
+        for (size_t side = 0; side < 2; ++side) {
+            const uint32_t table = d.word(record + (side ? 0x5e : 0x62));
+            for (size_t pose = 0; pose < 32; ++pose)
+                d.part(prepared.hands[side][pose], d.word(table + uint32_t(pose) * 4));
+        }
+        d.part(prepared.belt_knot, d.word(record + 0x0e));
+        // Original Akira's slot-keyed dynamic accessories: one head ribbon
+        // and two belt tails. Decode source anchors and segment lengths too.
+        if (*d.main_bytes(0xfda944, 1) != 0x16)
+            throw std::runtime_error("unsupported Akira strand slot");
+        const uint32_t strands = d.word(0xfda945);
+        uint32_t cursor = strands + 4;
+        const auto byte = [&](uint32_t at) { return *d.main_bytes(at, 1); };
+        const auto real = [&](uint32_t at) {
+            const uint32_t bits = d.word(at);
+            float value; memcpy(&value, &bits, sizeof value);
+            if (!std::isfinite(value) || std::abs(value) > 1000000)
+                throw std::runtime_error("invalid strand coordinate");
+            return value;
+        };
+        if (byte(cursor++) != prepared.strands.size())
+            throw std::runtime_error("unsupported Akira strand group count");
+        for (auto &strand : prepared.strands) {
+            cursor += 0x46; // original solver's group parameters
+            if (byte(cursor++) != 1)
+                throw std::runtime_error("unsupported Akira strand chain count");
+            strand.bone = byte(cursor++);
+            for (float &axis : strand.anchor) { axis = real(cursor); cursor += 4; }
+            if (byte(cursor++) != strand.segments.size())
+                throw std::runtime_error("unsupported Akira strand segment count");
+            for (size_t segment = 0; segment < strand.segments.size(); ++segment) {
+                d.part(strand.segments[segment], d.word(cursor));
+                const float length = real(cursor + 4);
+                if (!(length > 0 && length < 1)) throw std::runtime_error("invalid strand length");
+                strand.lengths[segment] = length;
+                cursor += 0x18; // descriptor, length, spring parameter, initial world position
+            }
+        }
+        if (prepared.strands[0].bone != 2 || prepared.strands[1].bone != 9 || prepared.strands[2].bone != 9)
+            throw std::runtime_error("unsupported Akira strand attachments");
         out = std::move(prepared);
         error.clear();
         return true;
