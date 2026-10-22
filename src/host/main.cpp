@@ -102,6 +102,7 @@
 #include "../video/sky_lead.h"
 #include "../video/r3d_scene.h"
 #include "../video/vf1_akira.h"
+#include "../video/vf2_akira.h"
 #include "akira_selection.h"
 #include "../video/r3d_raster.h"
 #include "../video/parallel.h"
@@ -732,9 +733,10 @@ struct Game
 	video::TileGen tiles;
 	video::SceneBuilder builder;
 	video::Vf1Akira vf1_akira;
+	video::Vf2Akira vf2_akira;
 	AkiraSelection akira_selection;
-	bool force_vf1_akira = false;
-	unsigned appearance_mask = 0, selection_hint_mask = 0;
+	bool force_vf1_akira = false, force_vf2_akira = false;
+	unsigned appearance_mask = 0, vf2_appearance_mask = 0, selection_hint_mask = 0;
 	std::string loaded_zip;
 	// the last two frames' scenes (smooth motion goes between them) and their 2D layers
 	video::Scene scene[2];
@@ -854,7 +856,7 @@ struct Game
 		sound_out.clear();
 		board.reset();
 		akira_selection.reset();
-		appearance_mask = 0;
+		appearance_mask = vf2_appearance_mask = 0;
 		sound.reset();
 		builder.clear_cache();
 		have_prev = false;
@@ -873,7 +875,7 @@ struct Game
 	}
 	void start_frame()
 	{
-		akira_selection.update(board.controls, AkiraSelection::snapshot(board.ram), vf1_akira.ready());
+		akira_selection.update(board.controls, AkiraSelection::snapshot(board.ram), vf1_akira.ready(), vf2_akira.ready());
 		board.run_frame_start();
 	}
 	void finish_frame(bool sound_on, bool picture)
@@ -896,13 +898,17 @@ struct Game
 		newest ^= 1;
 		builder.build(board, scene[newest]);
 		const auto selection = AkiraSelection::snapshot(board.ram);
-		const unsigned next_mask = force_vf1_akira ? 3 : akira_selection.mask(selection);
+		const unsigned next_mask = force_vf2_akira ? 0 : force_vf1_akira ? 3 : akira_selection.mask(selection,1);
+		const unsigned next_vf2_mask = force_vf2_akira ? 3 : force_vf1_akira ? 0 : akira_selection.mask(selection,2);
 		vf1_akira.apply(scene[newest], force_vf1_akira ? 3 : AkiraSelection::outfits(board.ram, next_mask));
-		have_prev = frame > 1 && appearance_mask == next_mask;
+		vf2_akira.apply(scene[newest], force_vf2_akira ? 3 : AkiraSelection::outfits(board.ram, next_vf2_mask));
+		have_prev = frame > 1 && appearance_mask == next_mask && vf2_appearance_mask == next_vf2_mask;
+		if (vf2_appearance_mask != next_vf2_mask) fprintf(stderr, "VF2 Akira selection: player mask %u\n", next_vf2_mask);
+		vf2_appearance_mask = next_vf2_mask;
 		if (appearance_mask != next_mask) fprintf(stderr, "VF1 Akira selection: player mask %u\n", next_mask);
 		appearance_mask = next_mask;
 		selection_hint_mask = 0;
-		if (vf1_akira.ready()) for (unsigned p=0;p<2;++p)
+		if (vf1_akira.ready() || vf2_akira.ready()) for (unsigned p=0;p<2;++p)
 			if (selection[p].human && selection[p].selecting && selection[p].akira) selection_hint_mask |= 1u<<p;
 		tiles.aligned(below, above);
 		tiles.aligned_wide(below_wide);
@@ -927,7 +933,7 @@ struct Game
 		video::Scene scene[2];
 		int newest = 0;
 		bool have_prev = false, full_3d = false, bg_moved = false;
-		unsigned appearance_mask = 0, selection_hint_mask = 0;
+		unsigned appearance_mask = 0, vf2_appearance_mask = 0, selection_hint_mask = 0;
 		float bg_dx = 0, bg_dy = 0;
 		std::vector<uint32_t> below = std::vector<uint32_t>(video::W * video::H), above = std::vector<uint32_t>(video::W * video::H);
 		std::vector<uint32_t> below_wide = std::vector<uint32_t>(video::WW * video::H);
@@ -944,6 +950,7 @@ struct Game
 		view.have_prev = have_prev;
 		view.full_3d = full_3d;
 		view.appearance_mask = appearance_mask;
+		view.vf2_appearance_mask = vf2_appearance_mask;
 		view.selection_hint_mask = selection_hint_mask;
 		view.bg_moved = bg_moved;
 		view.bg_dx = bg_dx;
@@ -1014,8 +1021,8 @@ int main(int argc, char **argv)
 	std::string zip;
 	bool arg_arcade = false, sound = true, show_boot = false, arg_interp = getenv("VF3_INTERP") != nullptr;
 	int arg_volume = -1, arg_music = -1, arg_effects = -1, arg_scale = 0, arg_aspect = -1, arg_full = -1;
-	std::string arg_roms, arg_vf1_rom;
-	bool arg_vf1_akira = false;
+	std::string arg_roms, arg_vf1_rom, arg_vf2_rom;
+	bool arg_vf1_akira = false, arg_vf2_akira = false;
 	for (int i = 1; i < argc; i++) {
 		const std::string a = argv[i];
 		if (a == "--arcade") arg_arcade = true;
@@ -1023,6 +1030,9 @@ int main(int argc, char **argv)
 		else if (a.rfind("--roms=", 0) == 0) arg_roms = a.substr(7);
 		else if (a == "--vf1-rom" && i + 1 < argc) arg_vf1_rom = argv[++i];
 		else if (a.rfind("--vf1-rom=", 0) == 0) arg_vf1_rom = a.substr(10);
+		else if (a == "--vf2-rom" && i + 1 < argc) arg_vf2_rom = argv[++i];
+		else if (a.rfind("--vf2-rom=", 0) == 0) arg_vf2_rom = a.substr(10);
+		else if (a == "--vf2-akira") arg_vf2_akira = true;
 		else if (a == "--vf1-akira") arg_vf1_akira = true;
 		else if (a == "--interp") arg_interp = true;
 		else if (a == "--fullscreen") arg_full = 1;
@@ -1158,44 +1168,39 @@ int main(int argc, char **argv)
 		std::string err;
 		if (!game.load(zip, err, arg_interp)) return fail(err);
 	}
-	// The companion remains external: no decoded VF1 data is bundled or written out.
-	auto load_vf1_akira = [&](std::string &error) {
-		if (game.vf1_akira.ready()) return true;
+	// The companions remain external: no decoded model data is bundled or written out.
+	auto load_appearance = [&](auto &appearance, const std::string &explicit_path,
+	                           const char *filename, const char *name) {
 		std::vector<std::filesystem::path> candidates;
-		if (!arg_vf1_rom.empty()) candidates.emplace_back(arg_vf1_rom);
+		if (!explicit_path.empty()) candidates.emplace_back(explicit_path);
 		else {
-			if (!game.loaded_zip.empty()) candidates.push_back(std::filesystem::path(game.loaded_zip).parent_path() / "vf.zip");
+			if (!game.loaded_zip.empty()) candidates.push_back(std::filesystem::path(game.loaded_zip).parent_path() / filename);
 #ifdef VF3_IOS
 			const auto documents = std::filesystem::path(ios_documents_path());
-			candidates.push_back(documents / "roms" / "vf.zip");
-			candidates.push_back(documents / "vf.zip");
+			candidates.push_back(documents / "roms" / filename);
+			candidates.push_back(documents / filename);
 #endif
 		}
 		for (const auto &candidate : candidates) {
 			std::error_code ec;
 			if (!std::filesystem::is_regular_file(candidate, ec)) continue;
-			if (!game.vf1_akira.load(candidate.string(), error)) {
-				error = "Cannot load " + candidate.string() + ": " + error;
-				fprintf(stderr, "VF1 Akira: %s\n", error.c_str());
-				return false;
+			std::string error;
+			if (!appearance.load(candidate.string(), error)) {
+				fprintf(stderr, "%s Akira: cannot load %s: %s\n", name, candidate.string().c_str(), error.c_str());
+				return;
 			}
-			fprintf(stderr, "VF1 Akira: loaded companion %s\n", candidate.string().c_str());
-			return true;
+			appearance.enabled = true;
+			fprintf(stderr, "%s Akira: loaded companion %s\n", name, candidate.string().c_str());
+			return;
 		}
-#ifdef VF3_IOS
-		error = "Copy your own vf.zip to Files > On My iPhone/iPad > VF3 Recomp > roms, then relaunch the app.";
-#else
-		error = "Place your own vf.zip beside vf3.zip, then relaunch the app. You can also launch with --vf1-rom <path>.";
-#endif
-		return false;
 	};
-	{
-		std::string error;
-		const bool available = load_vf1_akira(error);
-		game.vf1_akira.enabled = available;
-		game.force_vf1_akira = arg_vf1_akira;
-		if (arg_vf1_akira && !available) fprintf(stderr, "VF1 Akira unavailable: %s\n", error.c_str());
-	}
+	load_appearance(game.vf1_akira, arg_vf1_rom, "vf.zip", "VF1");
+	load_appearance(game.vf2_akira, arg_vf2_rom, "vf2.zip", "VF2");
+	game.force_vf1_akira = arg_vf1_akira && !arg_vf2_akira;
+	game.force_vf2_akira = arg_vf2_akira;
+	if (arg_vf1_akira && !game.vf1_akira.ready()) fprintf(stderr, "VF1 Akira unavailable: provide vf.zip beside vf3.zip or --vf1-rom <path>.\n");
+	if (arg_vf2_akira && !game.vf2_akira.ready()) fprintf(stderr, "VF2 Akira unavailable: provide vf2.zip beside vf3.zip or --vf2-rom <path>.\n");
+
 	m3::Model3 &board = game.board;
 	const std::string backup_path = data + "/backup", eeprom_path = data + "/eeprom";
 	load_blob(backup_path, board.backup.data(), board.backup.size());
@@ -2997,8 +3002,12 @@ int main(int argc, char **argv)
 				SDL_RenderFillRect(ren, &box);
 				SDL_SetRenderDrawColor(ren, 255, 220, 70, 255);
 				char label[40];
-				const bool vf1=game.view.appearance_mask & (1u<<p);
-				snprintf(label,sizeof label,"P%u AKIRA: %s  %s",p+1,vf1 ? "VF1" : "VF3",vf1 ? "DOWN: VF3" : "UP: VF1");
+				const unsigned current=(game.view.appearance_mask & (1u<<p)) ? 1 : (game.view.vf2_appearance_mask & (1u<<p)) ? 2 : 0;
+				const char *names[]={"VF3","VF1","VF2"};
+				const bool loaded[]={true,game.vf1_akira.ready(),game.vf2_akira.ready()};
+				unsigned next=current;
+				do { next=(next+1)%3; } while (!loaded[next]);
+				snprintf(label,sizeof label,"P%u AKIRA: %s  UP: %s",p+1,names[current],names[next]);
 				SDL_RenderDebugText(ren,x,y,label);
 			}
 			SDL_SetRenderScale(ren, sx, sy);

@@ -57,5 +57,26 @@ int main()
     s[1].selecting=true;
     c.up[1]=true; choice.update(c,s,true);
     assert(choice.mask(s)==0); // held across entry needs a new press
-    puts("Akira selection: player isolation, edges, confirm, navigation and missing-ROM checks passed");
+    choice.reset();
+    s={{{true,true,true},{true,true,true}}};
+    c={}; choice.update(c,s,true,true);
+    auto press_up=[&](unsigned player,bool vf1=true,bool vf2=true) {
+        c={}; choice.update(c,s,vf1,vf2);
+        c.up[player]=true; choice.update(c,s,vf1,vf2);
+        assert(!c.up[player]);
+    };
+    press_up(0); assert(choice.mask(s,1)==1 && choice.mask(s,2)==0);
+    press_up(0); assert(choice.mask(s,1)==0 && choice.mask(s,2)==1);
+    c={}; c.up[0]=true; choice.update(c,s,true,true);
+    assert(choice.mask(s,2)==1); // holding does not rotate again
+    press_up(1); assert(choice.mask(s,1)==2 && choice.mask(s,2)==1);
+    press_up(0); assert(choice.mask(s,1)==2 && choice.mask(s,2)==0); // VF3
+    press_up(0); assert(choice.mask(s,1)==3); // repeat entire cycle
+    choice.reset(); c={}; choice.update(c,s,false,true);
+    press_up(0,false,true); assert(choice.mask(s,1)==0 && choice.mask(s,2)==1);
+    press_up(0,false,true); assert(choice.mask(s,2)==0); // missing VF1 is skipped
+    choice.reset(); c={}; choice.update(c,s,true,false);
+    press_up(0,true,false); assert(choice.mask(s,1)==1);
+    press_up(0,true,false); assert(choice.mask(s,1)==0); // missing VF2 is skipped
+    puts("Akira selection: VF3/VF1/VF2 cycle, player isolation, edges, confirm, navigation and missing-ROM checks passed");
 }

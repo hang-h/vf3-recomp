@@ -49,29 +49,32 @@ before atomically replacing the saved ZIP; failed imports preserve the previous 
 The archive limit is 512 MiB. Settings, logs, backup RAM and EEPROM live in the app's
 Library area. Replacing a ROM after the game starts requires relaunching.
 
-## Optional VF1 Akira appearance
+## Optional VF1 / VF2 Akira appearances
 
-Supply your own complete MAME **vf** set as **vf.zip**. On iPhone/iPad, copy it to
-**Files → On My iPhone/iPad → VF3 Recomp → roms**, alongside `vf3.zip`. On Mac,
-place it beside the loaded `vf3.zip`, or pass `--vf1-rom /path/to/vf.zip`.
-The Files import button is for `vf3.zip`; copy the optional `vf.zip` using Files.
+Supply your own complete MAME **vf** set as **vf.zip** and **vf2** set as
+**vf2.zip**. On iPhone/iPad, copy them to **Files → On My iPhone/iPad → VF3 Recomp
+→ roms**, alongside `vf3.zip`, then relaunch. On Mac, place them beside the loaded
+`vf3.zip`, or pass `--vf1-rom /path/to/vf.zip` and `--vf2-rom /path/to/vf2.zip`.
+The Files import button is for `vf3.zip`; copy the optional companions using Files.
 
-On the character-select screen, highlight **Akira** and press **Up once** to
-choose VF1. Press **Down** to return to VF3, then confirm with the usual button.
-Each player chooses independently; the choice lasts for that selection/playthrough.
-The screen shows the selected appearance. Down with VF3 already selected retains
-normal roster navigation. During a fight, all directions work normally.
-No menu setting is needed or saved. After adding `vf.zip`, relaunch the app;
-a missing or invalid companion leaves VF3 and its original controls playable.
-Only Akira's appearance changes; VF3 still provides the moves and game rules.
-The prototype uses a neutral VF1 face and VF1 hands, headband ribbon and belt.
-Hands follow VF3's finger curl approximately; the belt tails follow the pelvis
-without a separate cloth simulation. VF3 shadows remain in use.
-Both VF3 outfits use the same VF1 appearance. See [model notes](../tools/models/README.md)
-for the supported layout and local verification commands.
-No VF1 ROM or extracted model data is distributed with the app.
-For diagnostic runs, `--vf1-akira` forces the appearance for all recognised Akiras,
-bypassing per-player selection.
+On the character-select screen, highlight **Akira**. Each **Up press** cycles
+**VF3 → VF1 → VF2 → VF3**; release the stick between presses. Confirm with the
+usual button. The label shows the current appearance and the next Up choice.
+Each player chooses independently, starting from VF3 for each new selection.
+Missing or invalid companions are skipped. **Down** returns an alternate
+appearance to VF3; Down while VF3 is selected retains normal roster navigation.
+Fighting controls work normally. No menu setting is needed or saved.
+
+Only appearance changes; VF3 supplies the moves, game rules and shadows. VF1 and
+VF2 bodies, hands, headband ribbons and belts are decoded from their respective
+ROMs. Finger poses and ribbon motion are approximated from VF3, and belt tails
+have no separate cloth simulation. The face stays neutral. Both VF3 outfits use
+the selected game's P1 appearance. The selection portrait remains VF3; the
+recognised full fighter changes in the match. See [model notes](../tools/models/README.md)
+for texture/lighting limitations and local verification commands.
+No ROM or extracted model data is distributed with the app.
+For diagnostics, `--vf1-akira` or `--vf2-akira` forces that appearance for all
+recognised Akiras, bypassing per-player selection.
 
 ## iOS behavior
 

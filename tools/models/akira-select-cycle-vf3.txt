@@ -1,0 +1,8 @@
+1310 press p1.coin
+1330 press p1.coin
+1390 press p1.start
+1580 press p1.up 6
+1600 press p1.up 6
+1620 press p1.up 6
+1640 press p1.punch
+2000 hold p1.guard

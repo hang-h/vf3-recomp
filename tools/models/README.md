@@ -1,33 +1,54 @@
-# VF1 Akira appearance prototype
+# VF1 / VF2 Akira appearance prototype
 
-Highlight Akira on the character-select screen and press **Up once** for VF1;
-**Down** returns to VF3. Confirm normally. Each human player chooses independently,
-and a new selection starts with VF3. Native Down navigation to VF3's lower roster
-row remains available when VF1 is not selected. Fighting controls are unchanged.
-The appearance uses geometry decoded from the player's own `vf.zip`. Put it
-beside `vf3.zip`; on iOS use the app's `Documents/roms` folder and relaunch.
-`--vf1-rom /path/to/vf.zip` chooses an explicit companion on Mac. The diagnostic
-flag `--vf1-akira` bypasses selection and replaces all recognised Akiras.
-No ROMs or decoded meshes are included in the repository or application.
+Highlight Akira on the character-select screen. Each **Up press** cycles
+**VF3 → VF1 → VF2 → VF3**; held Up advances only once. **Down** returns to VF3.
+Confirm normally. Each human player chooses independently, and each new selection
+starts with VF3. Native Down navigation to VF3's lower roster row remains
+available when VF3 is selected. Fighting controls are unchanged.
 
-This is an appearance prototype. VF3 still supplies the skeleton, moves,
-collision and shadows. Hands use VF1's 32 source poses per side, selected
-approximately from VF3 finger curl. The white headband ribbon follows VF3 tail
-directions; the VF1 belt knot and tails follow the pelvis without separate cloth
-physics. The face uses VF1's neutral pose;
-it does not reproduce VF3 facial expressions. Both VF3 outfits currently use
-the same original VF1 P1 Akira geometry and palette. Close-up/selection/LOD
-layouts that do not contain the complete recognised skeleton stay original.
-The selection screen keeps VF3's portrait and shows the chosen appearance in a
-label; replacement is applied to the recognised full fighter in the match.
-Physical-device rendering and all stages/animations have not been exhaustively
-verified.
+The appearances are decoded from the player's own `vf.zip` and `vf2.zip`.
+Put them beside `vf3.zip`; on iOS use the app's `Documents/roms` folder and relaunch.
+Unavailable/invalid companions are skipped. `--vf1-rom /path/to/vf.zip` and
+`--vf2-rom /path/to/vf2.zip` choose explicit companions on Mac. Diagnostic flags
+`--vf1-akira` / `--vf2-akira` bypass selection and replace all recognised Akiras
+(VF2 takes precedence if both flags are provided).
+No ROMs or decoded meshes/textures are included in the repository or application.
+
+VF3 still supplies the skeleton, moves, collision and shadows. Each source has
+32 native hand poses per side, selected approximately from VF3 finger curl.
+Headband ribbons use the source geometry and follow VF3 tail directions; VF2's
+two five-segment ribbons are fitted to VF3's three cloth bones. VF1 belt tails
+follow the pelvis; VF2's two two-segment belt tails follow the torso, without
+separate cloth physics. Faces use neutral source poses, without VF3 expressions.
+Both VF3 outfits use the same source game's P1 Akira geometry and palette.
+Incomplete/ambiguous skeleton layouts stay original. The selection screen keeps
+VF3's portrait and shows the chosen appearance in a label; the recognised full
+fighter changes in the match. Physical-device rendering and all stages/animations
+have not been exhaustively verified.
 
 ## Implementation and evidence
 
 - `src/host/vf1_models.cpp` decodes 13 size/CRC-checked ROM members. Its 13 semantic
   parts contain 3,452 triangles, with no VF2-specific scaling. The decoder and ZIP
   reader are adapted from `hang-h/vf2-recomp` under MIT.
+- `src/host/vf2_models.cpp` reads size/CRC-checked VF2 ROMs, decodes the
+  13 body parts, 64 native hand poses, two headband ribbons and two belt tails.
+  `vf2_texture_decode.h` reconstructs the three raw and nine Huffman-compressed
+  Akira base textures directly from ROM. All 180,224 packed 2x2 blocks matched
+  a native VF2 frame-1700 texture-sheet dump; ASan/UBSan and truncated-stream
+  probes passed. This establishes the texture data, not pixel-identical rendering.
+  For the shared flat-colour mesh path, UV faces are adaptively subdivided to
+  depth three for the face/accessories, two for the body and one for the 64
+  cached hand poses, then sampled and stripped of transparent samples. The
+  resulting body has 39,631 triangles and each hand pose has 760 triangles.
+  Fine texture edges are therefore approximate. Colours use ROM luma/colour
+  curves with a fixed native first-fight palette environment (offset 64, slope
+  37, gain 128 and special-curve LUT offset -52), followed by VF3 lighting;
+  dynamic VF2 stage colour translation is not reproduced.
+- `src/video/vf2_akira.cpp` loads the VF2 source into the shared adapter with
+  uniform 2048 scaling and reversed local Z. VF2's 0.25 arm and 0.39/0.44 leg
+  segments match VF3's 512 and 798.72/901.12 lengths. Distinct mesh cache keys
+  allow VF1 and VF2 appearances in the same mirror match.
 - `src/video/vf1_akira.cpp` converts Model 1 coordinates into VF3 local space and
   groups flat triangles by colour for the common CPU/GPU renderer. Opposite face
   normals preserve Model 1's mixed strip winding.
@@ -47,7 +68,7 @@ verified.
 - `src/host/akira_selection.h` reads revision D's per-player task at
   `0x108000 + player * 0x80`: phase 5 is unlocked selection, fighter byte +0x42
   identifies Akira (0 or 13). Up is consumed only while choosing Akira; Down
-  cancels VF1 and is consumed until release. Other directions/fighters and all
+  returns to VF3 and is consumed until release. Other directions/fighters and all
   fighting input remain native. Rendered actor IDs at `0x1087f0 + player * 0x2000`
   map each player's choice to the standard/alternate head (0/13); ambiguous
   identities remain original. Appearance changes clear frame interpolation.
@@ -62,17 +83,32 @@ The bindings above come from the renderer's runtime node/matrix traces and
 original/replaced pictures. Local evidence is under `build/vf1-akira-probe`,
 `build/vf1-akira-p2` and `build/vf1-akira-body`; none is required at runtime.
 
+VF2 archive inspection via REA MCP is retained locally in
+`build/vf2-akira-rea.json` (inspection evidence
+`ev_a6863f58b809b0c639fe8cf41af45964a4d68998903a2df2fd4408004580e446`).
+The inspected ZIP SHA-256 is
+`4427d2e58609c435fa42e06e62cba8a33a1a613fc5c7bd21a2d9cfb1ece4a790`.
+Texture proof and native colour/upload traces are in
+`build/vf2-texture-probe/decode-evidence.json` and its sibling local files.
+No probe output or extracted ROM data is required or shipped at runtime.
+
 ## Reproduce local checks
 
 From the repository root, with a C++20 compiler and zlib:
 
 ```sh
-make -j4 build/bin/vf1-models-test build/bin/akira-check build/bin/akira-selection-test build/bin/akira-selection-check
+make -j4 build/bin/vf1-models-test build/bin/vf2-models-test build/bin/akira-check build/bin/akira-selection-test build/bin/akira-selection-check
 build/bin/akira-selection-test
 build/bin/vf1-models-test /path/to/vf.zip
+build/bin/vf2-models-test /path/to/vf2.zip
 build/bin/akira-selection-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-select-vf1.txt 2100 1 1
 build/bin/akira-selection-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-select-p2-vf1.txt 2400 2 1
 build/bin/akira-selection-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-select-mirror-p1.txt 3500 1 1
+build/bin/akira-selection-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-select-vf2.txt 2100 0 0 /path/to/vf2.zip 1 1
+build/bin/akira-selection-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-select-cycle-vf3.txt 2100 0 0 /path/to/vf2.zip 0 0
+build/bin/akira-selection-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-select-p2-vf2.txt 2400 0 0 /path/to/vf2.zip 2 1
+build/bin/akira-selection-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-select-mirror-mixed.txt 3500 1 1 /path/to/vf2.zip 2 1
+build/bin/akira-check /path/to/vf3.zip /path/to/vf2.zip tools/models/akira-attacks.txt build/akira-vf2 2100 1 vf2
 build/bin/akira-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-guard.txt build/akira-guard
 build/bin/akira-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-attacks.txt build/akira-attacks
 build/bin/akira-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-p2.txt build/akira-p2 2400
@@ -85,15 +121,25 @@ checks cover input edges, cancel, cursor movement, the lower roster row, missing
 assets, confirm/lock, P1/P2 isolation and mirror matches. The scene check takes seven snapshots 100 frames apart,
 asserts the expected fighter count, unchanged transforms/draw attributes and
 unaffected opponent/environment viewports, then checks disabled and unknown
-layouts. It writes original/VF1 CPU pictures for visual inspection. The mirror
+layouts. It writes original/VF1/VF2 CPU pictures for visual inspection. The mirror
 script also exercises fighters split across multiple lighting viewports.
 
 Apple builds use `apple/sources.json` for both the native Xcode project and CMake.
-The local Mac app was also run with SDL GPU Metal and smooth motion; the iOS
-simulator used CPU 3D with Metal presentation. The original prototype also exercised menu switching on the simulator; current
-selection checks use scripted joystick directions and per-player masks. The final
-Mac Metal run verified a mixed VF1/VF3 Akira mirror match; the final iOS simulator
-run selected VF1 using Up and reached the fight with hands, ribbon and belt. See `apple/README.md` for platform build commands.
+The final Mac app ran a mixed P1 VF1 / P2 VF2 Akira mirror match using SDL GPU
+Metal and smooth motion. All three Up-cycle labels were captured separately.
+The final iOS simulator used CPU 3D with Metal presentation, selected VF2 with
+two Up presses and reached the fight with native hands/ribbons/belt. Seven
+snapshots each of VF2 guard, attack, P2 and mirror scripts passed scene invariants; VF1's
+seven regression pictures remained byte-identical after the shared adapter change.
+Local evidence is in `build/vf2-selection-checks`, `build/vf2-selection-mac`,
+`build/vf2-selection-ios` and `build/vf2-akira`. See `apple/README.md` for build
+commands.
+
+An M4 Pro probe measured VF2 loading at 65 ms and the converted body/64-hand
+vertex cache at about 28.6 MiB. A single 496×384 CPU frame took 10.3 ms versus
+3.2 ms for the original scene; this is one desktop sample, not an iPhone
+performance guarantee. The final Mac Metal mixed-match run maintained about
+57.5 emulated frames/s. Physical-device performance remains unverified.
 
 Final local build verification: macOS Debug, iOS Simulator Debug and unsigned
 iOS device Release sources were recompiled and linked against the existing

@@ -6,6 +6,7 @@
 #include "../../src/video/r3d_raster.h"
 #include "../../src/video/tilegen.h"
 #include "../../src/video/vf1_akira.h"
+#include "../../src/video/vf2_akira.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -35,7 +36,8 @@ void picture(const video::Scene &scene, const std::filesystem::path &path)
     for(size_t i=0;i<below.size();++i) if(above[i]>>24) below[i]=above[i];
     require(write_png(path.string().c_str(),below.data(),video::W,video::H),"could not save screenshot");
 }
-void check(video::Vf1Akira &appearance, unsigned frame, size_t expected, const std::filesystem::path &output)
+template<class Appearance>
+void check(Appearance &appearance, unsigned frame, size_t expected, const std::filesystem::path &output, const char *appearance_name="vf1")
 {
     video::Scene original;
     builder.build(board,original);
@@ -79,19 +81,22 @@ void check(video::Vf1Akira &appearance, unsigned frame, size_t expected, const s
     for(size_t v=0;v<unsupported.viewports.size();++v)
         require(same_models(unsupported.viewports[v],intact.viewports[v]),"unknown layout partially replaced");
     picture(original,output/("original-"+std::to_string(frame)+".png"));
-    picture(changed,output/("vf1-"+std::to_string(frame)+".png"));
+    picture(changed,output/(std::string(appearance_name)+"-"+std::to_string(frame)+".png"));
     printf("frame %u: %zu Akira; transforms, other viewports and disabled/unsupported paths unchanged\n",frame,count);
     fflush(stdout);
 }
 }
 int main(int argc,char **argv)
 {
-    if(argc<5 || argc>7) { fprintf(stderr,"usage: akira-check vf3.zip vf.zip input.txt output-directory [first-frame=2100] [fighters=1]\n"); return 2; }
+    if(argc<5 || argc>8) { fprintf(stderr,"usage: akira-check vf3.zip vf.zip input.txt output-directory [first-frame=2100] [fighters=1] [vf1|vf2]\n"); return 2; }
     try {
         std::string error;
         if (!board.load(argv[1],error)) throw std::runtime_error(error);
         video::Vf1Akira appearance;
-        if (!appearance.load(argv[2],error)) throw std::runtime_error(error);
+        video::Vf2Akira appearance2;
+        const bool use_vf2=argc>7 && std::string(argv[7])=="vf2";
+        if (argc>7 && !use_vf2 && std::string(argv[7])!="vf1") throw std::runtime_error("appearance must be vf1 or vf2");
+        if (!(use_vf2 ? appearance2.load(argv[2],error) : appearance.load(argv[2],error))) throw std::runtime_error(error);
         InputScript inputs;
         if (!inputs.load(argv[3],error)) throw std::runtime_error(error);
         const unsigned first=argc>5 ? unsigned(std::stoul(argv[5])) : 2100;
@@ -103,7 +108,7 @@ int main(int argc,char **argv)
         board.on_line=[](unsigned y){if(y==0)tiles.clear();tiles.line(board,y);};
         for(unsigned f=0;f<first+600;++f) {
             inputs.step(board.controls,f);board.run_frame();
-            if(f+1>=first && (f+1-first)%100==0)check(appearance,f+1,expected,output);
+            if(f+1>=first && (f+1-first)%100==0){ if(use_vf2)check(appearance2,f+1,expected,output,"vf2");else check(appearance,f+1,expected,output); }
         }
     } catch(const std::exception &e) { fprintf(stderr,"%s\n",e.what());return 1; }
 }
