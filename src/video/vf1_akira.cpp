@@ -136,7 +136,15 @@ bool Vf1Akira::load_assets(const vf1_models::Assets &assets, AkiraSource source,
     decltype(parts) next;
     for (auto b : bindings) {
         if(model2) { b.sx=b.sy=units;b.sz=-units;b.z=0; }
-        next[size_t(b.part)] = convert(assets.parts[size_t(b.part)], b,key_base);
+        if(model2 && b.part==Part::Torso) {
+            auto torso=assets.parts[size_t(b.part)];
+            // VF2's native waist bridges are not part of the rigid torso mesh.
+            // Extend only its lower hem so VF3's torso/pelvis bend stays covered;
+            // the chest, shoulders and neck retain their original coordinates.
+            for(auto &t:torso)for(auto &p:t.points)
+                p[0]-=.03f*std::clamp((.16f-p[0])/.16f,0.0f,1.0f);
+            next[size_t(b.part)]=convert(torso,b,key_base);
+        } else next[size_t(b.part)] = convert(assets.parts[size_t(b.part)], b,key_base);
     }
     decltype(hands) next_hands;
     std::array<bool,2> has_hands{};
@@ -284,10 +292,13 @@ size_t Vf1Akira::apply(Scene &scene, unsigned outfit_mask, unsigned preview_mask
         append(head_with_ribbon,ribbon_geometry,121,mesh_key_base);
         for (auto &vp : scene.viewports) if (same_camera(vp)) for (auto &m : vp.models) {
             const int slot=int(m.matrix_index)-base;
-            // Original face, eye spheres and headband tails. Shadow meshes
-            // use separate slots (+1 etc.) and remain the game's shadows.
+            // The animated face occupies +1 in the selection head-only layout,
+            // but +25 in fights. Fight +1 is a shadow, so identify the face by
+            // both its source node and the layout-specific matrix offset.
+            const bool original_face=m.source_node==(outfit ? 0x51e48u : 0x50990u) &&
+                slot==(preview ? 1 : 25);
             const bool original_belt=m.source_node==(outfit ? 0x430d8u : 0x42f58u) || m.source_node==(outfit ? 0x430c8u : 0x42f48u);
-            if (slot==0 || (slot>=2 && slot<=(preview ? 3 : 8)) ||
+            if (original_face || slot==0 || (slot>=2 && slot<=(preview ? 3 : 8)) ||
                 (replace_ribbon && ribbon_visible && slot>=(preview ? 4 : 9) && slot<=(preview ? 17 : 25)) ||
                 (!preview && replace_hands[0] && wrists[0] && slot>=34 && slot<=48) ||
                 (!preview && replace_hands[1] && wrists[1] && slot>=58 && slot<=72) ||

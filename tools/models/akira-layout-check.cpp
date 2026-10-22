@@ -4,6 +4,7 @@
 #include "../../src/host/input_script.h"
 #include "../../src/host/png.h"
 #include "../../src/video/vf1_akira.h"
+#include "../../src/host/vf2_models.h"
 #include "../../src/video/r3d_raster.h"
 #include "../../src/video/tilegen.h"
 #include <cstdio>
@@ -25,10 +26,16 @@ static void picture(const video::Scene &scene,const std::filesystem::path &path)
 }
 int main(int argc,char **argv)
 {
-    if(argc!=9){fprintf(stderr,"usage: akira-layout-check vf3.zip vf.zip script output first last outfit-mask preview(0|1)\n");return 2;}
+    if(argc!=9 && argc!=10){fprintf(stderr,"usage: akira-layout-check vf3.zip vf.zip script output first last outfit-mask preview(0|1) [vf1|vf2]\n");return 2;}
     try {
         std::string error;require(board.load(argv[1],error),error.c_str());
-        video::Vf1Akira appearance;require(appearance.load(argv[2],error),error.c_str());appearance.enabled=true;
+        video::Vf1Akira appearance;
+        const bool vf2=argc==10 && std::string(argv[9])=="vf2";
+        if(vf2) {
+            vf1_models::Assets assets;require(vf2_models::load(argv[2],assets,error),error.c_str());
+            require(appearance.load_assets(assets,video::AkiraSource::VF2,error),error.c_str());
+        } else require(appearance.load(argv[2],error),error.c_str());
+        appearance.enabled=true;
         InputScript script;require(script.load(argv[3],error),error.c_str());
         const unsigned first=std::stoul(argv[5]),last=std::stoul(argv[6]),mask=std::stoul(argv[7]);
         const bool preview=std::stoul(argv[8])!=0;
@@ -49,9 +56,21 @@ int main(int argc,char **argv)
                     require(a.addr==b.addr && a.source_node==b.source_node && a.node_path==b.node_path && a.matrix_index==b.matrix_index && a.alpha==b.alpha && a.scale==b.scale && a.page==b.page && !std::memcmp(a.matrix.m,b.matrix.m,sizeof a.matrix.m),"draw attributes changed");
                 }
             }
+            // A replaced skull alone is insufficient: the independently animated
+            // VF3 face must also disappear, while an unselected opponent stays intact.
+            unsigned faces=0;
+            for(size_t v=0;v<original.viewports.size();++v)for(size_t m=0;m<original.viewports[v].models.size();++m) {
+                const auto &a=original.viewports[v].models[m],&b=changed.viewports[v].models[m];
+                const unsigned owner=a.source_node==0x50990 ? 1 : a.source_node==0x51e48 ? 2 : 0;
+                if(owner & mask) {require(b.meshes->empty(),"original animated face overlays replacement");++faces;}
+                else if(owner) require(a.meshes==b.meshes,"unselected opponent face changed");
+                if(a.source_node==0x4c680 || a.source_node==0x6edd0)
+                    require(a.meshes==b.meshes,"fight head shadow changed");
+            }
+            require(faces>0,"no animated face checked");
             auto unsupported=original;for(auto &v:unsupported.viewports)for(auto &m:v.models)m.source_node=0;
             require(appearance.apply(unsupported,mask,preview?mask:0)==0,"unknown layout accepted");
-            picture(original,output/(std::to_string(f+1)+"-original.png"));picture(changed,output/(std::to_string(f+1)+"-vf1.png"));
+            picture(original,output/(std::to_string(f+1)+"-original.png"));picture(changed,output/(std::to_string(f+1)+(vf2?"-vf2.png":"-vf1.png")));
             printf("frame %u: %s replaced; transforms and unknown-layout guard preserved\n",f+1,preview?"selection preview":"visible fighter");fflush(stdout);
         }
     }catch(const std::exception &e){fprintf(stderr,"%s\n",e.what());return 1;}

@@ -51,6 +51,9 @@ have not been exhaustively verified.
   uniform 2048 scaling and reversed local Z. VF2's 0.25 arm and 0.39/0.44 leg
   segments match VF3's 512 and 798.72/901.12 lengths. Distinct mesh cache keys
   allow VF1 and VF2 appearances in the same mirror match.
+  VF2's lower torso is extended toward the pelvis by up to 0.03 source units
+  (61.44 VF3 units), fading to zero at local X=0.16. This covers the waist seam
+  during VF3 torso bends without enlarging the shoulders or changing gameplay.
 - `src/video/vf1_akira.cpp` converts Model 1 coordinates into VF3 local space and
   groups flat triangles by colour for the common CPU/GPU renderer. Opposite face
   normals preserve Model 1's mixed strip winding.
@@ -72,6 +75,10 @@ have not been exhaustively verified.
   Head-only selection layouts require an explicit preview mask from the host.
   They use the original/alternate head and cloth nodes at offsets +4/+6/+8,
   independently of the battle actor IDs, which are not yet assigned at selection.
+  The separately animated VF3 face at node `0x50990` / `0x51e48` must also
+  be removed: its matrix offset is +1 in selection and +25 in fights. Fight
+  offset +1 is a shadow and stays intact. Regression checks assert that no
+  selected VF3 animated face remains and that the unselected face is unchanged.
 - `src/host/akira_selection.h` reads revision D's per-player task at
   `0x108000 + player * 0x80`: phase 5 is unlocked selection, fighter byte +0x42
   identifies Akira (0 or 13). Up is consumed only while choosing Akira; Down
@@ -182,3 +189,8 @@ was rebuilt after its layout change. Logs are
 The final Mac/simulator bundles were locally ad-hoc signed; a physical iPhone
 still requires normal Xcode signing. This is incremental verification, not a
 fresh dependency build.
+
+Selection overlay / VF2 waist follow-up: source-only VF1/VF2 previews were
+checked for both outfits, including explicit animated-face removal and head
+shadow preservation. Local screenshots and logs are under `build/akira-face-fix`;
+waist fitting comparisons are retained under `build/vf2-akira/waist-fit-evidence.json`.
