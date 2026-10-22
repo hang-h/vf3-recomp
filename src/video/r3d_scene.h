@@ -69,6 +69,8 @@ struct Model
 	float alpha = 1, scale = 1;
 	int page = 0;          // the texture sheet flip from the nodes
 	uint32_t node_path = 0;   // a hash of the culling nodes above it (for matching between frames)
+	uint32_t source_node = 0; // the culling node that submitted this model
+	uint16_t matrix_index = 0; // nearest matrix in the viewport's table (before model space)
 };
 
 struct Viewport
@@ -86,6 +88,7 @@ struct Viewport
 	bool full_screen = false;
 	Mat4 root = Mat4::identity();   // the matrix of the first node with one (the camera's, where the game puts it there)
 	int root_matrix = -1;            // its index in the matrix table (-1: none)
+	uint32_t matrix_table = 0;        // culling RAM address; viewports can share one skeleton's matrices
 	std::vector<Model> models;
 };
 
@@ -136,6 +139,8 @@ private:
 	std::vector<Mat4> stack;
 	Mat4 cur;
 	uint32_t path = 0;
+	uint32_t source_node = 0;
+	uint16_t matrix_index = 0;
 	Viewport *vp = nullptr;
 	struct Planes { float lu, lv, tu, tw, ru, rv, bu, bw; } planes = {};
 	std::unordered_map<uint32_t, Meshes> rom_cache;

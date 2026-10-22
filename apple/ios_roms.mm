@@ -4,6 +4,18 @@
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
+static std::string loaded_rom_path;
+
+std::string ios_loaded_rom_path() { return loaded_rom_path; }
+
+std::string ios_documents_path()
+{
+    @autoreleasepool {
+        NSURL *url = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+        return url ? url.fileSystemRepresentation : "";
+    }
+}
+
 static void remove_abandoned_imports(NSURL *documents)
 {
     NSFileManager *files = NSFileManager.defaultManager;
@@ -159,6 +171,7 @@ static void remove_abandoned_imports(NSURL *documents)
             self.choose.enabled = YES;
             if (result->ok) {
                 self->_roms = std::move(*result);
+                loaded_rom_path = (importing ? destination : url).fileSystemRepresentation;
                 self.status.text = @"ROM verified. Starting the game…";
                 self.ready = YES;
             } else {

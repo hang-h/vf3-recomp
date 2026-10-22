@@ -101,6 +101,7 @@
 #include "../video/tilegen.h"
 #include "../video/sky_lead.h"
 #include "../video/r3d_scene.h"
+#include "../video/vf1_akira.h"
 #include "../video/r3d_raster.h"
 #include "../video/parallel.h"
 #include "png.h"
@@ -488,6 +489,7 @@ struct settings
 	std::string roms_folder;
 	std::string gpu3d_failed;   // SDL_GPU's drivers whose 3D failed here ("direct3d12 vulkan"): the next start tries the next
 	bool fullscreen = false, arcade = false, show_fps = false, smooth = true;
+	bool vf1_akira = false;   // optional appearance; the VF3 simulation is unchanged
 	bool timings = false;    // F9: the timings in the title bar
 	bool smooth_bg = true;   // the 2D backgrounds (the layers below the 3D) scaled smoothly, not as blocks
 	bool sharp_textures = true;   // the 3D's textures' mipmap levels for the picture's size (false: the arcade's, video::Raster::arcade_lod)
@@ -522,6 +524,7 @@ struct settings
 		if (auto it = kv.find("gpu_3d_failed"); it != kv.end()) gpu3d_failed = it->second;
 		flag("fullscreen", fullscreen);
 		flag("arcade_mode", arcade);
+		flag("vf1_akira", vf1_akira);
 		flag("frame_timings", timings);
 		flag("show_fps", show_fps);
 		flag("smooth_motion", smooth);
@@ -573,6 +576,7 @@ struct settings
 		}
 		fprintf(f, "# Virtua Fighter 3 settings (the in-game menu writes these)\n");
 		fprintf(f, "settings_version = %d\n", VERSION);
+		fprintf(f, "vf1_akira = %d\n", int(vf1_akira));
 		fprintf(f, "scale = %d\npicture_shape = %d\nfullscreen = %d\nvolume = %d\narcade_mode = %d\nshow_fps = %d\n"
 				"smooth_motion = %d\nrenderer_3d = %d\nbackground_filter = %d\n", scale, aspect, int(fullscreen), volume, int(arcade), int(show_fps),
 				int(smooth), renderer3d, int(smooth_bg));
@@ -729,6 +733,8 @@ struct Game
 	SoundBoard sound;
 	video::TileGen tiles;
 	video::SceneBuilder builder;
+	video::Vf1Akira vf1_akira;
+	std::string loaded_zip;
 	// the last two frames' scenes (smooth motion goes between them) and their 2D layers
 	video::Scene scene[2];
 	int newest = 0;
@@ -751,8 +757,10 @@ struct Game
 		romset::result roms;
 		if (!ios_load_roms(roms)) { error = "Could not load vf3.zip."; return false; }
 		if (!board.load(std::move(roms), error)) return false;
+		loaded_zip = ios_loaded_rom_path();
 #else
 		if (!board.load(zip, error)) return false;
+		loaded_zip = zip;
 #endif
 #ifndef VF3_NO_JIT
 		if (!interp) {
@@ -880,6 +888,7 @@ struct Game
 		if (!picture) { have_prev = false; sky.reset(); return; }
 		newest ^= 1;
 		builder.build(board, scene[newest]);
+		vf1_akira.apply(scene[newest]);
 		have_prev = frame > 1;
 		tiles.aligned(below, above);
 		tiles.aligned_wide(below_wide);
@@ -896,6 +905,19 @@ struct Game
 	const video::Scene &cur() const { return scene[newest]; }
 	const video::Scene &prev() const { return scene[newest ^ 1]; }
 	void forget_prev() { have_prev = false; view.have_prev = false; }
+	void set_akira_appearance(bool enabled)
+	{
+		job_wait();
+		vf1_akira.enabled = enabled && vf1_akira.ready();
+		// Build from the arcade scene again: disabling must restore the original meshes,
+		// and the published frame must not interpolate between different appearances.
+		builder.build(board, scene[newest]);
+		vf1_akira.apply(scene[newest]);
+		forget_prev();
+		sky.reset();
+		view.scene[view.newest] = scene[newest];
+		view.sky = sky;
+	}
 
 	// What the pictures are drawn from: the last two frames' scenes, their 2D layers, the sky's lead and a copy of the
 	// texture RAM, taken from the game as each frame ends (publish). The game's frames run on a thread of their own
@@ -988,12 +1010,16 @@ int main(int argc, char **argv)
 	std::string zip;
 	bool arg_arcade = false, sound = true, show_boot = false, arg_interp = getenv("VF3_INTERP") != nullptr;
 	int arg_volume = -1, arg_music = -1, arg_effects = -1, arg_scale = 0, arg_aspect = -1, arg_full = -1;
-	std::string arg_roms;
+	std::string arg_roms, arg_vf1_rom;
+	bool arg_vf1_akira = false;
 	for (int i = 1; i < argc; i++) {
 		const std::string a = argv[i];
 		if (a == "--arcade") arg_arcade = true;
 		else if (a == "--roms" && i + 1 < argc) arg_roms = argv[++i];
 		else if (a.rfind("--roms=", 0) == 0) arg_roms = a.substr(7);
+		else if (a == "--vf1-rom" && i + 1 < argc) arg_vf1_rom = argv[++i];
+		else if (a.rfind("--vf1-rom=", 0) == 0) arg_vf1_rom = a.substr(10);
+		else if (a == "--vf1-akira") arg_vf1_akira = true;
 		else if (a == "--interp") arg_interp = true;
 		else if (a == "--fullscreen") arg_full = 1;
 		else if (a == "--window") arg_full = 0;
@@ -1106,6 +1132,7 @@ int main(int argc, char **argv)
 	if (cfg.fullscreen) { cfg.fullscreen = false; cfg_dirty = true; }
 #endif
 	if (arg_arcade) cfg.arcade = true;
+	if (arg_vf1_akira) cfg.vf1_akira = true;
 	if (arg_volume >= 0) cfg.volume = arg_volume;
 	if (arg_music >= 0) cfg.music = arg_music;
 	if (arg_effects >= 0) cfg.effects = arg_effects;
@@ -1127,6 +1154,43 @@ int main(int argc, char **argv)
 	{
 		std::string err;
 		if (!game.load(zip, err, arg_interp)) return fail(err);
+	}
+	// The companion remains external: no decoded VF1 data is bundled or written out.
+	auto load_vf1_akira = [&](std::string &error) {
+		if (game.vf1_akira.ready()) return true;
+		std::vector<std::filesystem::path> candidates;
+		if (!arg_vf1_rom.empty()) candidates.emplace_back(arg_vf1_rom);
+		else {
+			if (!game.loaded_zip.empty()) candidates.push_back(std::filesystem::path(game.loaded_zip).parent_path() / "vf.zip");
+#ifdef VF3_IOS
+			const auto documents = std::filesystem::path(ios_documents_path());
+			candidates.push_back(documents / "roms" / "vf.zip");
+			candidates.push_back(documents / "vf.zip");
+#endif
+		}
+		for (const auto &candidate : candidates) {
+			std::error_code ec;
+			if (!std::filesystem::is_regular_file(candidate, ec)) continue;
+			if (!game.vf1_akira.load(candidate.string(), error)) {
+				error = "Cannot load " + candidate.string() + ": " + error;
+				fprintf(stderr, "VF1 Akira: %s\n", error.c_str());
+				return false;
+			}
+			fprintf(stderr, "VF1 Akira: loaded companion %s\n", candidate.string().c_str());
+			return true;
+		}
+#ifdef VF3_IOS
+		error = "Copy your own vf.zip to Files > On My iPhone/iPad > VF3 Recomp > roms, then choose VF1 again.";
+#else
+		error = "Place your own vf.zip beside vf3.zip, then choose VF1 again. You can also launch with --vf1-rom <path>.";
+#endif
+		return false;
+	};
+	{
+		std::string error;
+		const bool available = load_vf1_akira(error);
+		game.vf1_akira.enabled = cfg.vf1_akira && available;
+		if (cfg.vf1_akira && !available) fprintf(stderr, "VF1 Akira unavailable: %s\n", error.c_str());
 	}
 	m3::Model3 &board = game.board;
 	const std::string backup_path = data + "/backup", eeprom_path = data + "/eeprom";
@@ -2167,12 +2231,29 @@ int main(int argc, char **argv)
 		p.items.push_back(back_item());
 		return p;
 	};
+	bool appearance_redraw = false;
 	auto game_page = [&] {
 		menu_page p{ "Game", "", {} };
 		p.items.push_back({ "Play style",
 			"PC skips the boot screen and is always free play. Arcade has the boot screen, coins and credits, like the real cabinet: Start needs a credit, and Coin adds one (5 and 6, or set it in Controls: a key, or a pad button such as View); its coin settings are kept for it. Changing it restarts the game.",
 			[&] { return std::string(cfg.arcade ? "Arcade" : "PC"); },
 			[&](int) { cfg.arcade = !cfg.arcade; g_pc_mode = !cfg.arcade; cfg_dirty = true; reset_game(); } });
+		p.items.push_back({ "Akira appearance",
+			"VF1 uses Akira's original appearance with VF3's moves. Requires your own vf.zip beside vf3.zip (on iOS, in the app's roms folder). Applies to Akira only.",
+			[&] { return std::string(game.vf1_akira.enabled ? "VF1" : (game.vf1_akira.ready() ? "VF3" : "VF3 (add vf.zip)")); },
+			[&](int) {
+				game.job_wait();
+				const bool enable = !game.vf1_akira.enabled;
+				std::string error;
+				if (enable && !load_vf1_akira(error)) {
+					message_box(SDL_MESSAGEBOX_INFORMATION, "VF1 Akira appearance", error);
+					return;
+				}
+				game.set_akira_appearance(enable);
+				appearance_redraw = true;
+				cfg.vf1_akira = enable;
+				cfg_dirty = true;
+			} });
 		p.items.push_back({ "Reset game", "Restarts the game, like switching the arcade off and on. Rankings and settings are kept. (F3)",
 			{}, {}, [&] { reset_game(); } });
 		p.items.push_back(back_item());
@@ -2359,7 +2440,7 @@ int main(int argc, char **argv)
 #endif
 			, {}, {}, [&] { menu.push(display_page()); } });
 		p.items.push_back({ "Sound", "The overall, music and effects volumes.", {}, {}, [&] { menu.push(sound_page()); } });
-		p.items.push_back({ "Game", "Play style and reset.", {}, {}, [&] { menu.push(game_page()); } });
+		p.items.push_back({ "Game", "Play style, Akira appearance and reset.", {}, {}, [&] { menu.push(game_page()); } });
 		p.items.push_back({ "Arcade settings", "Difficulty, rounds, energy, demo sound, country and the service menu. Changing them restarts the game.", {}, {},
 							[&] { if (arcade_before.empty()) arcade_before = arcade_bytes(); menu.push(arcade_page()); } });
 		p.items.push_back({ "Controls", "Each player's controller, keys and buttons.", {}, {}, [&] { menu.push(controls_page()); } });
@@ -2837,7 +2918,7 @@ int main(int argc, char **argv)
 		}
 		// (hidden, or vsync off: nothing paces the passes to the screen, a picture each pass was ~500 a second; as VF1's)
 		const bool every_refresh = !hidden && vsync_on && screen_hz <= (gov.smooth_off ? 60 : 120) * 1.05;
-		const bool draw = rec.on || new_frame || (smooth && !stopped && !unseen && (smooth_budget >= 1 || every_refresh)) || !first_shown;
+		const bool draw = rec.on || appearance_redraw || new_frame || (smooth && !stopped && !unseen && (smooth_budget >= 1 || every_refresh)) || !first_shown;
 		if (draw) {
 			smooth_budget = std::max(0.0, smooth_budget - 1);
 			t9.pictures++;
@@ -2845,6 +2926,7 @@ int main(int argc, char **argv)
 			double t = smooth && !stopped ? std::clamp(frame_clock - double(frames_run), 0.0, 1.0) : 1.0;
 			if (stopped) t = 1.0;
 			draw_picture(t, new_frame);
+			appearance_redraw = false;
 			if (test_load_ms > 0 && double(SDL_GetTicksNS() - start_ns) / 1e9 < test_load_s + 5)
 				SDL_DelayNS(uint64_t(test_load_ms * scale * scale * 1e6));
 			const double ms = double(SDL_GetTicksNS() - td) / 1e6;

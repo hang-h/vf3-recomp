@@ -36,7 +36,7 @@ $(OBJ)/third_party/rmlui/%.o: CXXFLAGS += $(RML_CFLAGS) $(FT_CFLAGS) $(SDL_CFLAG
 $(OBJ)/src/host/main.o $(OBJ)/src/host/menu.o $(OBJ)/src/host/sysinfo.o $(OBJ)/src/host/d3d11_map.o $(OBJ)/src/gpu/r3d_gpu.o: CXXFLAGS += $(SDL_CFLAGS) $(RML_CFLAGS)
 $(OBJ)/src/host/main.o: $(OBJ)/version.h
 $(OBJ)/src/host/main.o: CXXFLAGS += -I$(OBJ)
-HOST = src/host/main.cpp src/host/menu.cpp src/host/sysinfo.cpp src/host/d3d11_map.cpp src/gpu/r3d_gpu.cpp
+HOST = src/host/vf1_models.cpp src/video/vf1_akira.cpp src/host/main.cpp src/host/menu.cpp src/host/sysinfo.cpp src/host/d3d11_map.cpp src/gpu/r3d_gpu.cpp
 
 CORE = src/ppc/ppc.cpp src/machine/model3.cpp src/machine/romset.cpp src/host/input_script.cpp \
 	src/rec/ppc_rec.cpp src/rec/vf3_map.cpp src/video/tilegen.cpp src/video/r3d_scene.cpp src/video/r3d_raster.cpp \
@@ -62,6 +62,15 @@ $(BIN)/vf3run: $(call objs,$(CORE) tools/vf3run.cpp) $(SLJIT_OBJ)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
 $(BIN)/vf3lock: $(call objs,$(CORE) tools/vf3lock.cpp) $(SLJIT_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+
+# Optional checks with the user's local ROMs (see tools/models/README.md).
+$(BIN)/akira-check: $(call objs,$(CORE) src/host/vf1_models.cpp src/video/vf1_akira.cpp tools/models/akira-check.cpp) $(SLJIT_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+
+$(BIN)/vf1-models-test: $(call objs,src/host/vf1_models.cpp tests/vf1_models_test.cpp)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 

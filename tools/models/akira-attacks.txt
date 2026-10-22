@@ -1,0 +1,11 @@
+1310 press p1.coin
+1330 press p1.coin
+1390 press p1.start
+1640 press p1.punch
+2050 press p1.kick
+2110 press p1.punch
+2180 press p1.kick
+2250 press p1.punch
+2320 press p1.kick
+2430 press p1.escape
+2510 press p1.punch

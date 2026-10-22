@@ -49,6 +49,23 @@ before atomically replacing the saved ZIP; failed imports preserve the previous 
 The archive limit is 512 MiB. Settings, logs, backup RAM and EEPROM live in the app's
 Library area. Replacing a ROM after the game starts requires relaunching.
 
+## Optional VF1 Akira appearance
+
+Supply your own complete MAME **vf** set as **vf.zip**. On iPhone/iPad, copy it to
+**Files → On My iPhone/iPad → VF3 Recomp → roms**, alongside `vf3.zip`. On Mac,
+place it beside the loaded `vf3.zip`, or pass `--vf1-rom /path/to/vf.zip`.
+The Files import button is for `vf3.zip`; copy the optional `vf.zip` using Files.
+
+Choose **Menu → Game → Akira appearance → VF1**. The choice is saved and can be
+switched back to VF3 without restarting. If the ZIP was missing, add it and choose
+VF1 again. The default is VF3; a missing or invalid companion leaves VF3 playable.
+Only Akira's appearance changes; VF3 still provides the moves and game rules.
+This prototype retains VF3 hands, belt and shadows, and uses a neutral VF1 face.
+Both VF3 outfits use the same VF1 appearance. See [model notes](../tools/models/README.md)
+for the supported layout and local verification commands.
+No VF1 ROM or extracted model data is distributed with the app.
+For scripted runs, `--vf1-akira` enables the appearance at startup.
+
 ## iOS behavior
 
 The iOS target uses the PowerPC interpreter, with no SLJIT code or JIT entitlement.

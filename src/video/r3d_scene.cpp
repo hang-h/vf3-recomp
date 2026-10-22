@@ -172,7 +172,8 @@ void SceneBuilder::viewport(uint32_t addr, Scene &scene, int guard)
 		p.vp_w = (v[0x14] & 0xFFFF) / 4.0f;
 		p.vp_h = (v[0x14] >> 16) / 4.0f;
 		p.full_screen = p.vp_x == 0 && p.vp_w >= 495 && p.vp_y == 0 && p.vp_h >= 383;
-		matrix_base = reinterpret_cast<const float *>(culling(v[0x16] & 0xFFFFFF));
+		p.matrix_table = v[0x16] & 0xFFFFFF;
+		matrix_base = reinterpret_cast<const float *>(culling(p.matrix_table));
 		lod_table = reinterpret_cast<const float *>(culling(v[0x17] & 0xFFFFFF));
 		float cv = as_float(v[8]), cw = as_float(v[9]), io = as_float(v[10]), jo = as_float(v[11]);
 		planes = { as_float(v[0xC]), as_float(v[0xD]), as_float(v[0xE]), as_float(v[0xF]),
@@ -227,6 +228,8 @@ void SceneBuilder::viewport(uint32_t addr, Scene &scene, int guard)
 		cur.m[15] = 1;
 		mult_matrix(0);
 		path = 0;
+		source_node = 0;
+		matrix_index = 0;
 		if (!(v[0] & 0x20) && ((v[2] >> 24) & 5) == 0)
 			node_ptr(v[2]);
 		if (v[1] == 0x01000000)
@@ -305,6 +308,9 @@ void SceneBuilder::node_one(uint32_t addr)
 	Attribs saved = attr;
 	Mat4 saved_m = cur;
 	uint32_t saved_path = path;
+	const uint32_t saved_node = source_node;
+	const uint16_t saved_index = matrix_index;
+	source_node = addr;
 	path = path * 31 + addr;
 	depth++;
 	if (w0 & 0x10) {
@@ -314,6 +320,7 @@ void SceneBuilder::node_one(uint32_t addr)
 		t.m[14] = as_float(n[4]);
 		cur = cur * t;
 	} else if (w1 & 0xFFF) {
+		matrix_index = w1 & 0xFFF;
 		mult_matrix(w1 & 0xFFF);
 		if (vp && vp->root_matrix < 0) { vp->root = cur; vp->root_matrix = int(w1 & 0xFFF); }
 	}
@@ -376,6 +383,8 @@ void SceneBuilder::node_one(uint32_t addr)
 	cur = saved_m;
 	attr = saved;
 	path = saved_path;
+	source_node = saved_node;
+	matrix_index = saved_index;
 }
 
 void SceneBuilder::draw_model(uint32_t addr)
@@ -389,6 +398,8 @@ void SceneBuilder::draw_model(uint32_t addr)
 	m.scale = attr.scale;
 	m.page = attr.page;
 	m.node_path = path;
+	m.source_node = source_node;
+	m.matrix_index = matrix_index;
 	// ROM models without colour table indexes are the same every frame
 	bool dynamic = addr < 0x100000;
 	if (!dynamic) {

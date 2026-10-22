@@ -2,6 +2,7 @@
   "common": [
     "apple/native_controls.mm",
     "src/host/main.cpp",
+    "src/host/vf1_models.cpp",
     "src/host/menu.cpp",
     "src/host/sysinfo.cpp",
     "src/host/d3d11_map.cpp",
@@ -12,6 +13,7 @@
     "src/host/input_script.cpp",
     "src/video/tilegen.cpp",
     "src/video/r3d_scene.cpp",
+    "src/video/vf1_akira.cpp",
     "src/video/r3d_raster.cpp",
     "src/sound/soundboard.cpp",
     "src/sound/scsp.cpp",
