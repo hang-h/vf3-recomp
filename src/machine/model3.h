@@ -8,6 +8,7 @@
 // rather than known hardware behaviour.
 #pragma once
 #include "../ppc/ppc.h"
+#include "romset.h"
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -182,6 +183,7 @@ public:
 	std::function<void(unsigned)> on_line;  // the video: called at the start of each of the 384 active lines
 
 	bool load(const std::string &zip, std::string &error);
+	bool load(romset::result r, std::string &error);
 	void reset();
 	void run_frame();
 	// a frame in two halves (the host's smooth motion: each half in its own picture's time): the vertical blank and

@@ -86,7 +86,17 @@
 #include "version.h"      // VF3_VERSION, VF3_DATE (made by the Makefile from git)
 #include "../machine/model3.h"
 #include "../machine/romset.h"
+#ifndef VF3_NO_JIT
 #include "../rec/ppc_rec.h"
+#endif
+#include "../../apple/touch_controls.h"
+#ifdef VF3_NATIVE_CONTROLS
+#include "../../apple/native_controls.h"
+#endif
+#ifdef VF3_IOS
+#include "../../apple/ios_roms.h"
+#include "../../apple/ios_window.h"
+#endif
 #include "../sound/soundboard.h"
 #include "../video/tilegen.h"
 #include "../video/sky_lead.h"
@@ -101,7 +111,7 @@
 #include "d3d11_map.h"
 #include "../gpu/r3d_gpu.h"
 #include <SDL3/SDL.h>
-#ifdef _WIN32
+#if defined(_WIN32) || defined(VF3_IOS)
 #include <SDL3/SDL_main.h>   // WinMain, and argv as UTF-8
 #endif
 #include <algorithm>
@@ -240,7 +250,7 @@ const sys_key SYS_KEYS[] = {
 
 // The controls for the next frame, from the keyboard and the pads, and the hotkeys pressed on a pad. The PC way's
 // Start: two coins (a credit, as the game is set), then Start.
-hotkey read_inputs(m3::Controls &c, SDL_Gamepad *pads[2], pad_state ps[2], const player_controls ctl[2])
+hotkey read_inputs(m3::Controls &c, SDL_Gamepad *pads[2], pad_state ps[2], const player_controls ctl[2], touch_controls *touch)
 {
 	c = m3::Controls();
 	const bool *ks = SDL_GetKeyboardState(nullptr);
@@ -279,11 +289,17 @@ hotkey read_inputs(m3::Controls &c, SDL_Gamepad *pads[2], pad_state ps[2], const
 		};
 		for (int a = 0; a < C_START; a++)
 			if (key(ctl[p].key[a])) act(a);
-		const bool kstart = key(ctl[p].key[C_START]);
+		if (p == 0 && touch) {
+			static constexpr int actions[] = { C_UP, C_DOWN, C_LEFT, C_RIGHT, C_GUARD, C_PUNCH, C_KICK };
+			for (int a = touch_controls::UP; a <= touch_controls::KICK; ++a)
+				if (touch->held(a)) act(actions[a]);
+			if (touch->held(touch_controls::ESCAPE)) act(C_ESCAPE);
+		}
+		const bool kstart = key(ctl[p].key[C_START]) || (p == 0 && touch && touch->held(touch_controls::START));
 		bool start_held = kstart;   // (held, as the cabinet's: a character chosen with Start held is in the 2P outfit)
 		if (kstart && !key_start_was[p]) press_start();
 		key_start_was[p] = kstart;
-		const bool kcoin = key(ctl[p].key[C_COIN]);
+		const bool kcoin = key(ctl[p].key[C_COIN]) || (p == 0 && touch && touch->held(touch_controls::COIN));
 		if (kcoin && !key_coin_was[p] && !g_pc_mode) st.coin_frames = 6;
 		key_coin_was[p] = kcoin;
 		// a key set as Menu opens it too (Esc always does)
@@ -406,7 +422,7 @@ struct bg_saver
 	std::mutex m;
 	std::condition_variable cv;
 	std::map<std::string, std::vector<uint8_t>> pending;
-	bool stop = false;
+	bool stop = false, writing = false;
 	std::thread writer{ [this] { run(); } };   // (last: started once the rest is made)
 
 	void put(const std::string &path, const void *src, size_t n)
@@ -428,10 +444,18 @@ struct bg_saver
 				cv.wait(lk, [&] { return stop || !pending.empty(); });
 				if (pending.empty() && stop) return;
 				now.swap(pending);
+				writing = true;
 			}
 			for (auto &[path, bytes] : now)
 				if (!save_blob(path, bytes.data(), bytes.size())) fprintf(stderr, "couldn't save %s\n", path.c_str());
+			{ std::lock_guard<std::mutex> lk(m); writing = false; }
+			cv.notify_all();
 		}
+	}
+	void flush()
+	{
+		std::unique_lock<std::mutex> lk(m);
+		cv.wait(lk, [&] { return pending.empty() && !writing; });
 	}
 	void finish()
 	{
@@ -698,7 +722,9 @@ static void fast_thread()
 struct Game
 {
 	m3::Model3 board;
+#ifndef VF3_NO_JIT
 	ppcrec::Rec rec;
+#endif
 	bool recompiled = false;
 	SoundBoard sound;
 	video::TileGen tiles;
@@ -721,7 +747,14 @@ struct Game
 
 	bool load(const std::string &zip, std::string &error, bool interp)
 	{
+#ifdef VF3_IOS
+		romset::result roms;
+		if (!ios_load_roms(roms)) { error = "Could not load vf3.zip."; return false; }
+		if (!board.load(std::move(roms), error)) return false;
+#else
 		if (!board.load(zip, error)) return false;
+#endif
+#ifndef VF3_NO_JIT
 		if (!interp) {
 			ppcrec::Stats st;
 			built_image = board.program_image();
@@ -732,6 +765,7 @@ struct Game
 						st.instructions, st.native, st.code_bytes / 1024, st.ms);
 			} else fprintf(stderr, "couldn't recompile the game (no executable memory?): running it on the slower interpreter instead\n");
 		}
+#endif
 		sound.attach(&board.sound_rom, &board.samples);
 		board.on_line = [this](unsigned y) {
 			if (!tiles_on) return;
@@ -746,6 +780,7 @@ struct Game
 	std::vector<uint32_t> built_image;
 	void program_changed()
 	{
+#ifndef VF3_NO_JIT
 		if (!recompiled) return;
 		std::vector<uint32_t> img = board.program_image();
 		if (img == built_image) return;
@@ -754,6 +789,7 @@ struct Game
 		if (rec.build(board.cpu, built_image, &st))
 			fprintf(stderr, "recompiled again (the program changed): %zu instructions in %.0f ms\n", st.instructions, st.ms);
 		else fprintf(stderr, "couldn't recompile the changed program: the interpreter runs it\n");
+#endif
 	}
 	// The sound board runs on a thread of its own, a frame behind the game (its ~3 ms a frame alongside the next
 	// frame's work, not in a picture's time): it hears only the game's bytes, and its sound is queued a frame later
@@ -944,6 +980,9 @@ struct Game
 
 int main(int argc, char **argv)
 {
+#ifdef VF3_IOS
+	SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+#endif
 	if (getenv("VF3_HIDDEN")) SDL_SetHint(SDL_HINT_MAC_BACKGROUND_APP, "1");
 	const bool pace_log = getenv("VF3_PACE_LOG") != nullptr;
 	std::string zip;
@@ -971,6 +1010,7 @@ int main(int argc, char **argv)
 		else if (a == "--show-boot") show_boot = true;
 		else if (a.rfind("--", 0) == 0) { fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
 		else if (a.rfind("-psn_", 0) == 0) {}
+		else if (a == "-NSDocumentRevisionsDebugMode") { if (i + 1 < argc) ++i; }
 		else {
 			std::error_code ec;
 			if (!std::filesystem::is_regular_file(a, ec)) { fprintf(stderr, "%s: no such file (options start with --)\n", a.c_str()); return 2; }
@@ -988,6 +1028,9 @@ int main(int argc, char **argv)
 	}
 	auto fail = [](const std::string &what) {
 		fprintf(stderr, "%s\n", what.c_str());
+#ifdef VF3_IOS
+		ios_fatal_error(what);
+#endif
 		if (!getenv("VF3_HIDDEN")) message_box(SDL_MESSAGEBOX_ERROR, "Virtua Fighter 3", what);
 		return 1;
 	};
@@ -1044,6 +1087,12 @@ int main(int argc, char **argv)
 		fprintf(stderr, "run from macOS's hidden copy of the app (App Translocation): a portable.txt beside it isn't seen until the app is moved with the Finder\n");
 	const std::string settings_path = data + "/settings.ini";
 	settings cfg;
+#ifdef VF3_IOS
+	cfg.scale = 1;
+	cfg.smooth = false;
+	arg_interp = true;
+	show_boot = true;
+#endif
 	bool cfg_dirty = false;
 	if (deck) { cfg.fullscreen = true; cfg.aspect = 2; cfg.scale = 2; }
 	cfg.load(settings_path);
@@ -1051,6 +1100,11 @@ int main(int argc, char **argv)
 	if (arg_scale) cfg.scale = arg_scale;
 	if (arg_aspect >= 0) cfg.aspect = arg_aspect;
 	if (arg_full >= 0) cfg.fullscreen = arg_full;
+#ifdef VF3_IOS
+	// UIKit owns the scene size. Migrate saved desktop fullscreen toggles;
+	// SDL's fullscreen transition can resize the root view using stale orientation.
+	if (cfg.fullscreen) { cfg.fullscreen = false; cfg_dirty = true; }
+#endif
 	if (arg_arcade) cfg.arcade = true;
 	if (arg_volume >= 0) cfg.volume = arg_volume;
 	if (arg_music >= 0) cfg.music = arg_music;
@@ -1058,6 +1112,7 @@ int main(int argc, char **argv)
 	g_pc_mode = !cfg.arcade;
 	int aspect_i = cfg.aspect;
 
+#ifndef VF3_IOS
 	if (players) {
 		std::string roms_folder, from;
 		if (!arg_roms.empty()) roms_folder = player_folder(arg_roms), from = "--roms";
@@ -1067,6 +1122,7 @@ int main(int argc, char **argv)
 		else fprintf(stderr, "ROM folder: %s\n", (std::filesystem::path(data) / "roms").string().c_str());
 		if (!first_launch(data, keep_data, roms_folder, zip)) return hidden ? 1 : 0;
 	}
+#endif
 	static Game game;   // (large: not on the stack)
 	{
 		std::string err;
@@ -1113,7 +1169,12 @@ int main(int argc, char **argv)
 		// replaces it, and the arcade way gives it back (as VF1's and VF2's). A board that has never run writes its
 		// settings in its first frames, so those run first. FREE PLAY the player chose in the test menu, with none
 		// kept, stays.
-		for (int i = 0; i < 300 && board.coin_setting() < 0; i++) board.run_frame();
+		for (int i = 0; i < 300 && board.coin_setting() < 0; i++) {
+			board.run_frame();
+#ifdef VF3_IOS
+			ios_pump_loading();
+#endif
+		}
 		if (const int coin = board.coin_setting(); coin >= 0) {
 			int keep = cfg.arcade_coin;
 			if (g_pc_mode) {
@@ -1136,6 +1197,9 @@ int main(int argc, char **argv)
 			game.run_frame(false, false);
 			game.audio.clear();
 			game_frame++;
+#ifdef VF3_IOS
+			ios_pump_loading();
+#endif
 		}
 		game.tiles_on = true;
 		fprintf(stderr, "boot: %llu frames in %.2f s, unseen\n", (unsigned long long)game_frame,
@@ -1158,9 +1222,17 @@ int main(int argc, char **argv)
 			win_w = int(win_w * k); win_h = int(win_h * k);
 		}
 	}
-	SDL_Window *win = SDL_CreateWindow("Virtua Fighter 3", win_w, win_h,
-		SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | (cfg.fullscreen ? SDL_WINDOW_FULLSCREEN : 0) | SDL_WINDOW_HIDDEN);
+	SDL_WindowFlags window_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN;
+#ifdef VF3_IOS
+	window_flags |= SDL_WINDOW_BORDERLESS; // fills the UIKit scene without desktop fullscreen transitions
+#else
+	if (cfg.fullscreen) window_flags |= SDL_WINDOW_FULLSCREEN;
+#endif
+	SDL_Window *win = SDL_CreateWindow("Virtua Fighter 3", win_w, win_h, window_flags);
 	if (!win) return fail(std::string("Couldn't open the window: ") + SDL_GetError());
+#ifdef VF3_IOS
+	ios_prepare_game_window(win);
+#endif
 	SDL_HideCursor();
 	// the window's icon (the Mac app and the Windows exe carry their own)
 	if (SDL_Surface *icon = SDL_LoadPNG((find_assets() + "/icon/icon.png").c_str())) {
@@ -1292,6 +1364,10 @@ int main(int argc, char **argv)
 	if (!ren) ren = SDL_CreateRenderer(win, nullptr);
 	if (!ren) return fail(std::string("Couldn't start the graphics: ") + SDL_GetError());
 	SDL_SetRenderVSync(ren, 1);
+#ifdef VF3_IOS
+	// SDL's GPU and 2D Metal renderers replace the root view during creation.
+	ios_show_game_window(win);
+#endif
 	fprintf(stderr, "renderer: %s\n", SDL_GetRendererName(ren));
 
 	// ---- the picture ----
@@ -1956,7 +2032,9 @@ int main(int argc, char **argv)
 		fprintf(stderr, "render scale %dx\n", scale);
 	};
 	auto set_shape = [&](int a) { aspect_i = cfg.aspect = a; cfg_dirty = true; gov_fresh(); };
+#ifndef VF3_IOS
 	auto set_fullscreen = [&](bool on) { SDL_SetWindowFullscreen(win, on); SDL_SyncWindow(win); cfg.fullscreen = on; cfg_dirty = true; gov_fresh(); };
+#endif
 	int test_frames = 0;        // the test button held for these frames (the menu's Service menu; Start in the test menu)
 	int service_frames = 0, test_mode_frames = 0;   // (Down in the test menu: the service button)
 	bool test_pending = false, in_test = false, test_down_was = false, test_start_was = false;
@@ -1979,6 +2057,9 @@ int main(int argc, char **argv)
 		SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
 		SDL_RenderClear(ren);
 		SDL_RenderPresent(ren);
+#ifdef VF3_IOS
+		ios_finish_loading();
+#endif
 		save_nvram();
 		boot();
 		test_frames = service_frames = test_mode_frames = 0;
@@ -2052,9 +2133,11 @@ int main(int argc, char **argv)
 		p.items.push_back({ "Show FPS", "Shows the frame rate in the top right corner.",
 			[&] { return on_off(cfg.show_fps); },
 			[&](int) { cfg.show_fps = !cfg.show_fps; cfg_dirty = true; if (!cfg.show_fps) menu.set_fps(""); } });
+#ifndef VF3_IOS
 		p.items.push_back({ "Fullscreen", "Play fullscreen or in a window. (F11, F or Alt+Enter)",
 			[&] { return on_off(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN); },
 			[&](int) { set_fullscreen(!(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN)); } });
+#endif
 		p.items.push_back(back_item());
 		return p;
 	};
@@ -2270,22 +2353,54 @@ int main(int argc, char **argv)
 	auto main_page = [&] {
 		menu_page p{ "", "", {} };
 		p.items.push_back({ "Resume", "Back to the game.", {}, {}, [&] { menu.close(); } });
-		p.items.push_back({ "Display", "Sharpness, antialiasing, screen shape, the 3D renderer, smooth motion, background and screen filters, frame rate and fullscreen.", {}, {}, [&] { menu.push(display_page()); } });
+		p.items.push_back({ "Display", "Sharpness, antialiasing, screen shape, the 3D renderer, smooth motion, background and screen filters, and frame rate."
+#ifndef VF3_IOS
+			" Fullscreen or windowed display."
+#endif
+			, {}, {}, [&] { menu.push(display_page()); } });
 		p.items.push_back({ "Sound", "The overall, music and effects volumes.", {}, {}, [&] { menu.push(sound_page()); } });
 		p.items.push_back({ "Game", "Play style and reset.", {}, {}, [&] { menu.push(game_page()); } });
 		p.items.push_back({ "Arcade settings", "Difficulty, rounds, energy, demo sound, country and the service menu. Changing them restarts the game.", {}, {},
 							[&] { if (arcade_before.empty()) arcade_before = arcade_bytes(); menu.push(arcade_page()); } });
 		p.items.push_back({ "Controls", "Each player's controller, keys and buttons.", {}, {}, [&] { menu.push(controls_page()); } });
+#ifndef VF3_IOS
 		p.items.push_back({ "Quit", "Saves and closes the game.", {}, {}, [&] { running = false; } });
+#endif
 		return p;
 	};
+	bool backgrounded = false;
 	bool sound_paused = false;
 	auto sync_menu_sound = [&] {
-		if (!audio || menu.is_open() == sound_paused) return;
-		sound_paused = menu.is_open();
+		if (!audio || (menu.is_open() || backgrounded) == sound_paused) return;
+		sound_paused = menu.is_open() || backgrounded;
 		if (sound_paused) SDL_PauseAudioStreamDevice(audio); else SDL_ResumeAudioStreamDevice(audio);
 	};
 	auto open_menu = [&] { if (game.emu_thread.joinable()) game.job_wait(); if (menu.ready() && !menu.is_open()) menu.open(main_page()); sync_menu_sound(); };
+
+	touch_controls touch;
+	auto touch_shown = [&] {
+#ifdef VF3_IOS
+		return !pads[0];
+#else
+		return false;
+#endif
+	};
+	auto touch_menu_action = [&](int action) {
+		if (!menu.is_open() || action < touch_controls::UP || action > touch_controls::MENU) return;
+		using nav = game_menu::navigation;
+		static constexpr nav actions[] = { nav::up, nav::down, nav::left, nav::right,
+			nav::back, nav::select, nav::clear, nav::resume, nav::back };
+		menu.navigate(actions[action]);
+		touch.take_start(); touch.take_menu();
+		if (!menu.is_open()) touch.release();
+	};
+	bool native_touch = false;
+#ifdef VF3_NATIVE_CONTROLS
+	native_touch = !hidden && native_controls_attach(win, touch, touch_menu_action);
+#endif
+#ifdef VF3_IOS
+	ios_check_window_geometry(win, ren);
+#endif
 
 	// ---- test hooks ----
 	std::vector<std::pair<SDL_Scancode, uint64_t>> test_keys;   // VF3_KEYS
@@ -2343,7 +2458,9 @@ int main(int argc, char **argv)
 		fseek(rec.wav, 0, SEEK_END);
 	};
 	auto rec_stop = [&] {
+#ifndef VF3_IOS
 		if (rec.video) pclose(rec.video);
+#endif
 		if (rec.wav) { wav_header(); fclose(rec.wav); }
 		if (rec.on) fprintf(stderr, "record: %llu pictures, %.1f s, to %s\n", (unsigned long long)rec.n, rec.n / 60.0, rec.dir.c_str());
 		rec.video = rec.wav = nullptr;
@@ -2414,7 +2531,30 @@ int main(int argc, char **argv)
 		}
 		SDL_Event e;
 		while (SDL_PollEvent(&e)) {
-			if (e.type == SDL_EVENT_QUIT) running = false;
+			if (e.type == SDL_EVENT_QUIT || e.type == SDL_EVENT_TERMINATING) running = false;
+			if (e.type == SDL_EVENT_WILL_ENTER_BACKGROUND || e.type == SDL_EVENT_TERMINATING) {
+				backgrounded = true;
+				touch.release();
+				if (game.emu_thread.joinable()) game.job_wait();
+				saver.flush();
+				saved_hash = ~nvram_hash();
+				save_nvram(true);
+				if (quit_after < 0 && cfg.save(settings_path)) cfg_dirty = false;
+				sync_menu_sound();
+			}
+			if (e.type == SDL_EVENT_DID_ENTER_FOREGROUND) {
+				backgrounded = false;
+				touch.release();
+				restart_clock_real();
+				sync_menu_sound();
+			}
+			if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST) touch.release();
+			if (!native_touch && touch_shown() && (e.type == SDL_EVENT_FINGER_DOWN ||
+				e.type == SDL_EVENT_FINGER_MOTION || e.type == SDL_EVENT_FINGER_UP || e.type == SDL_EVENT_FINGER_CANCELED)) {
+				touch_menu_action(touch.finger(ren, win, e.tfinger,
+					e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_FINGER_MOTION, menu.is_open()));
+				continue;
+			}
 			if (e.type == SDL_EVENT_RENDER_DEVICE_RESET || e.type == SDL_EVENT_RENDER_TARGETS_RESET) textures_lost(e.type == SDL_EVENT_RENDER_DEVICE_RESET);
 			if (e.type == SDL_EVENT_RENDER_DEVICE_LOST) { fprintf(stderr, "the graphics device was lost: closing\n"); running = false; }
 			if (e.type == SDL_EVENT_GAMEPAD_ADDED || e.type == SDL_EVENT_GAMEPAD_REMOVED) { open_pads(); menu.refresh(); }
@@ -2423,6 +2563,7 @@ int main(int argc, char **argv)
 				if (!hidden && SDL_GetKeyboardFocus() != win) SDL_RaiseWindow(win);   // (the move to a new Space can lose it)
 			}
 			if (menu.handle_event(e)) continue;
+#ifndef VF3_IOS
 			// Fullscreen also with F and Alt+Enter, as VF1's and VF2's (after the menu's own events: typing in its
 			// fields never does it; F not while a player has it as a control, nor with Ctrl, Alt or the command key)
 			auto fullscreen_key = [&](const SDL_KeyboardEvent &k) {
@@ -2435,6 +2576,7 @@ int main(int argc, char **argv)
 				set_fullscreen(!(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN));
 				continue;
 			}
+#endif
 			if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
 				switch (e.key.scancode) {
 				case SDL_SCANCODE_ESCAPE: open_menu(); break;
@@ -2446,7 +2588,9 @@ int main(int argc, char **argv)
 					break;
 				case SDL_SCANCODE_F5: set_scale(scale % MAX_SCALE + 1); break;
 				case SDL_SCANCODE_F6: set_shape((aspect_i + 1) % N_ASPECTS); break;
+#ifndef VF3_IOS
 				case SDL_SCANCODE_F11: set_fullscreen(!(SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN)); break;
+#endif
 				case SDL_SCANCODE_F12: {
 					// the picture as drawn (the render scale, antialiased, its shape), without the bars around it or
 					// the screen filter, into Screenshots in the data folder, numbered, never overwritten (as VF2's)
@@ -2467,7 +2611,14 @@ int main(int argc, char **argv)
 				}
 			}
 		}
+		if (!touch_shown()) touch.release();
+		if (touch.take_menu() && !menu.is_open()) open_menu();
+		if (menu_was_open != menu.is_open()) touch.release();
 		sync_menu_sound();
+		if (backgrounded) { SDL_Delay(20); continue; }
+#ifdef VF3_IOS
+		ios_sync_game_window(win);
+#endif
 		if (menu_was_open && !menu.is_open()) {
 			if (cfg_dirty && quit_after < 0 && cfg.save(settings_path)) cfg_dirty = false;
 			if (!arcade_before.empty()) {
@@ -2502,7 +2653,9 @@ int main(int argc, char **argv)
 				rec.w = ww & ~1; rec.h = wh & ~1;
 				const std::string cmd = "ffmpeg -loglevel error -y -f rawvideo -pix_fmt rgba -s " + std::to_string(rec.w) + "x" + std::to_string(rec.h) +
 				                        " -r 60 -i - -c:v libx264 -preset slow -crf 12 -pix_fmt yuv420p '" + rec.dir + "/video.mp4'";
+#ifndef VF3_IOS
 				rec.video = popen(cmd.c_str(), "w");
+#endif
 				rec.wav = fopen((rec.dir + "/sound.wav").c_str(), "wb");
 				if (rec.wav) wav_header();
 				fprintf(stderr, "record: from frame %llu, %dx%d\n", (unsigned long long)rec.from, rec.w, rec.h);
@@ -2561,7 +2714,7 @@ int main(int argc, char **argv)
 		auto frame_inputs = [&](hotkey &hk, InputScript::Actions &act, bool &left_test) {
 				// the inputs the game reads during the next frame: the script's, then the player's
 				m3::Controls live;
-				hk = read_inputs(live, pads, pstate, cfg.ctl);
+				hk = read_inputs(live, pads, pstate, cfg.ctl, touch_shown() ? &touch : nullptr);
 				act = InputScript::Actions();
 				if (scripted) act = script.step(script_ctl, game_frame);
 				m3::Controls &c = board.controls;
@@ -2777,7 +2930,12 @@ int main(int argc, char **argv)
 				fps_n = 0;
 			}
 		}
+		menu.set_touch_controls(touch_shown());
 		if (menu.is_open() || fps_shown) menu.render(fps_shown);
+		if (touch_shown() && !native_touch) touch.draw(ren, menu.is_open());
+#ifdef VF3_NATIVE_CONTROLS
+		if (native_touch) native_controls_update(touch_shown(), menu.is_open());
+#endif
 		for (auto it = window_shots.begin(); it != window_shots.end();)
 			if (*it <= game_frame) { read_window("build/host_window_" + std::to_string(*it - 3) + ".png"); it = window_shots.erase(it); }
 			else ++it;
@@ -2802,6 +2960,9 @@ int main(int argc, char **argv)
 		}
 		pass_work_ns = SDL_GetTicksNS() - pass_t0;
 		SDL_RenderPresent(ren);
+#ifdef VF3_IOS
+		ios_finish_loading();
+#endif
 		{   // the governor's count of refreshes missed (above)
 			static uint64_t last_present = 0;
 			const uint64_t now_p = SDL_GetTicksNS();
@@ -2904,6 +3065,9 @@ int main(int argc, char **argv)
 	if (cfg_dirty && quit_after < 0) cfg.save(settings_path);
 	if (audio) SDL_DestroyAudioStream(audio);
 	for (auto &p : pads) if (p) SDL_CloseGamepad(p);
+#ifdef VF3_NATIVE_CONTROLS
+	native_controls_detach();
+#endif
 	menu_owner.reset();
 	if (g3.tex) SDL_DestroyTexture(g3.tex);
 	gpu3d.shutdown();

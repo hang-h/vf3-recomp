@@ -1,0 +1,2 @@
+#define VF3_VERSION "@VF3_VERSION@"
+#define VF3_DATE "@VF3_DATE@"

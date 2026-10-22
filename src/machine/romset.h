@@ -22,4 +22,7 @@ struct result
 // of the big-endian words.
 result load(const std::string &zip);
 
+// Validate a staged copy before atomically replacing a saved ROM archive.
+result import_file(const std::string &source, const std::string &destination);
+
 } // namespace romset

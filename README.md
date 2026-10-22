@@ -70,6 +70,16 @@ Known issues: Shun's stage water is the game's own low-resolution
 Known differences from the reference's pictures: textures far away are softer (the Real3D's own mipmap level choice,
 as Supermodel's New3D documents it, where the reference build used OpenGL's).
 
+## iPhone / iPad (Apple port)
+
+Open [VF3Recomp.xcodeproj](VF3Recomp.xcodeproj), choose **VF3 iOS**, set your signing
+Team for a physical device, and Run. Launch once, then copy your **vf3.zip (Revision D)**
+to **Files → On My iPhone/iPad → VF3 Recomp → roms**, or use the in-app Files picker.
+
+The port includes native touch controls with VF3's Escape button and runs the PowerPC
+interpreter without JIT. See [apple/README.md](apple/README.md) for setup, build commands,
+ROM import, controls and validation limits. The **VF3 macOS** scheme retains native recompilation.
+
 ## Play
 
 | System | Download |

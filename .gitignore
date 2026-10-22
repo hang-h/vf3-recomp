@@ -16,3 +16,8 @@ __pycache__/
 functions/
 .refhit-url
 /*-recomp/
+
+# Local Xcode state
+xcuserdata/
+*.xcuserstate
+DerivedData/

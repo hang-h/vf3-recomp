@@ -359,7 +359,11 @@ uint8_t Scsi::read(unsigned reg)
 
 bool Model3::load(const std::string &zip, std::string &error)
 {
-	romset::result r = romset::load(zip);
+	return load(romset::load(zip), error);
+}
+
+bool Model3::load(romset::result r, std::string &error)
+{
 	if (!r.ok) {
 		error = r.error;
 		return false;

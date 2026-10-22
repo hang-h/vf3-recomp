@@ -289,6 +289,33 @@ void game_menu::activate()
 		change(+1);
 }
 
+void game_menu::set_touch_controls(bool shown)
+{
+	if (m->doc) m->doc->SetClass("touch", shown);
+}
+
+void game_menu::navigate(navigation action)
+{
+	if (!m_open) return;
+	if (m_capture) {
+		if (action == navigation::back || action == navigation::resume) {
+			m_capture = nullptr;
+			build();
+		}
+		return;
+	}
+	switch (action) {
+	case navigation::up: move(-1); break;
+	case navigation::down: move(+1); break;
+	case navigation::left: change(-1); break;
+	case navigation::right: change(+1); break;
+	case navigation::back: pop(); break;
+	case navigation::select: activate(); break;
+	case navigation::clear: clear(); break;
+	case navigation::resume: close(); break;
+	}
+}
+
 bool game_menu::handle_event(const SDL_Event &e)
 {
 	if (!m_open) return false;
