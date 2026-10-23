@@ -106,6 +106,15 @@ $(BIN)/vf2-models-test: $(call objs,src/host/vf2_models.cpp tests/vf2_models_tes
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
+$(BIN)/vf2-textures-test: $(call objs,tests/vf2_textures_test.cpp)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+
+$(OBJ)/tests/model2_gpu_test.o: CXXFLAGS += $(SDL_CFLAGS)
+$(BIN)/model2-gpu-test: $(call objs,$(CORE) src/gpu/r3d_gpu.cpp tests/model2_gpu_test.cpp) $(SLJIT_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(SDL_LIBS) $(LDLIBS)
+
 $(BIN)/vf1-models-test: $(call objs,src/host/vf1_models.cpp tests/vf1_models_test.cpp)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)

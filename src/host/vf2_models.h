@@ -5,5 +5,7 @@
 namespace vf2_models {
 // Shares the semantic body/accessory container; vertices remain in VF2 local units.
 // ZIP member sizes and CRCs are checked. Failure leaves out unchanged.
-bool load(const std::string &zip, vf1_models::Assets &out, std::string &error, unsigned fighter=0);
+// Runtime keeps original UV triangles and indexed materials. textured=false
+// retains the subdivided-colour reference path for local decoder regressions.
+bool load(const std::string &zip, vf1_models::Assets &out, std::string &error, unsigned fighter=0, bool textured=true);
 }

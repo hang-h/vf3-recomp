@@ -44,7 +44,7 @@ struct Vp
 };
 
 static const uint F_TEXTURED = 1, F_ALPHA_TEST = 2, F_TEX_ALPHA = 4, F_LIGHTING = 8, F_FIXED = 16, F_SMOOTH = 32,
-	F_SPECULAR = 64, F_INVERTED = 128;
+	F_SPECULAR = 64, F_INVERTED = 128, F_MODEL2 = 256;
 
 static const int MIP_X[12] = { 0, 1024, 1536, 1792, 1920, 1984, 2016, 2032, 2040, 2044, 2046, 2047 };
 static const int MIP_Y[11] = { 0, 512, 768, 896, 960, 992, 1008, 1016, 1020, 1022, 1023 };
@@ -148,8 +148,61 @@ float4 fetch(Draw d, int page, int level, int x, int y)
 	return decode(d.format, (w >> ((at & 1) * 16)) & 0xFFFF);
 }
 
+// Model 2 interpolates indices/coverage before its luminance lookup. Retain
+// that order for facial decals; RGB filtering would darken eyes and lips.
+uint3 model2_axis(float coordinate, uint size, bool mirror, bool wrap)
+{
+    int fixed_ = int(coordinate * 256);
+    if (mirror && (fixed_ & int(size << 8))) fixed_ = ~fixed_;
+    fixed_ -= 128;
+    uint fraction = uint(fixed_) & 255;
+    uint a = uint(fixed_ >> 8) & (size - 1), b = (a + 1) & (size - 1);
+    if (!wrap && b == 0) {
+        if (fraction >= 128) { a = b; ++b; fraction = 0; }
+        else { b = a; --a; fraction = 256; }
+    }
+    return uint3(a,b,fraction);
+}
+uint model2_texel(Draw d, uint x, uint y)
+{
+    return texram.Load(uint(d.tx) + 4 * (128 + (y & uint(d.th-1)) * uint(d.tw) + (x & uint(d.tw-1))));
+}
+uint model2_packed(Draw d, uint x, uint y)
+{
+    uint value = model2_texel(d,x,y) << 4;
+    return value == 240 ? value : value | 0x00800000;
+}
+uint model2_lerp(uint a, uint b, uint f) { return (a + (((b-a)*f) >> 8)) & 0x00ff00ff; }
+float4 model2_sample(Draw d, float u, float v)
+{
+    uint flags = uint(d.ty), lookup;
+    if (!(flags & 0x10000)) {
+        uint x = uint(u), y = uint(v);
+        if ((flags & 0x100) && (x & uint(d.tw))) x = ~x;
+        if ((flags & 0x200) && (y & uint(d.th))) y = ~y;
+        uint index = model2_texel(d,x,y);
+        if ((flags & 0x2000) && index == 15) return 0;
+        lookup = index * 8;
+    } else {
+        uint3 x = model2_axis(u,uint(d.tw),(flags&0x100)!=0,(flags&0x40)!=0 && !(flags&0x100));
+        uint3 y = model2_axis(v,uint(d.th),(flags&0x200)!=0,(flags&0x80)!=0 && !(flags&0x200));
+        uint a = model2_packed(d,x.x,y.x), b = model2_packed(d,x.y,y.x);
+        uint c = model2_packed(d,x.x,y.y), e = model2_packed(d,x.y,y.y);
+        if (a == 240) a = b & 255; if (b == 240) b = a & 255;
+        if (c == 240) c = e & 255; if (e == 240) e = c & 255;
+        a = model2_lerp(a,b,x.z); c = model2_lerp(c,e,x.z);
+        if (a == 240) a = c & 255; if (c == 240) c = a & 255;
+        uint value = model2_lerp(a,c,y.z);
+        if (value < 0x00400000) return 0;
+        lookup = (value & 255) >> 1;
+    }
+    uint colour = texram.Load(uint(d.tx) + lookup * 4);
+    return float4((colour>>16)&255,(colour>>8)&255,colour&255,colour>>24)/255.0;
+}
+
 float4 bilinear(Draw d, int page, int level, float u, float v)
 {
+    if (d.flags & F_MODEL2) return model2_sample(d,u,v);
 	const float sw = float(d.tw >> level), sh = float(d.th >> level);
 	const int px = d.tx >> level, py = d.ty >> level;
 	float u0, u1, v0, v1;

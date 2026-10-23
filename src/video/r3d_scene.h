@@ -9,6 +9,7 @@
 #include <memory>
 #include <unordered_map>
 #include <vector>
+#include "../core/model2_texture.h"
 
 namespace m3 { class Model3; }
 
@@ -35,6 +36,7 @@ struct Vertex
 
 struct Mesh
 {
+    std::shared_ptr<const Model2Texture> model2_texture;
 	// what the polygons share
 	bool textured = false, alpha_test = false, texture_alpha = false, poly_alpha = false, lighting = false;
 	bool fixed_shading = false, smooth_shading = false, high_priority = false, trans_select = false, layered = false;

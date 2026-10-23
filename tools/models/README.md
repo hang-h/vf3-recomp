@@ -103,8 +103,10 @@ No test ROM or image is committed.
   Akira base textures directly from ROM. All 180,224 packed 2x2 blocks matched
   a native VF2 frame-1700 texture-sheet dump; ASan/UBSan and truncated-stream
   probes passed. This establishes the texture data, not pixel-identical rendering.
-  For the shared flat-colour mesh path, UV faces are adaptively subdivided to
-  depth three for the face/accessories, two for the body and one for the 64
+  The runtime now keeps source UV polygons and indexed materials (see
+  "Direct VF2 textures" below). For the retained flat-colour reference path,
+  UV faces are adaptively subdivided to depth three for the face/accessories,
+  two for the body and one for the 64
   cached hand poses, then sampled and stripped of transparent samples. Eye and
   mouth cutouts use a finer grid (0.75-texel target, at most five levels) so thin
   pupils and lips cannot disappear between otherwise uniform colour samples.
@@ -126,8 +128,8 @@ No test ROM or image is committed.
   Animated source expression aliases, eye/mouth texture uploads and jaw geometry
   are now decoded alongside the exact neutral head; see the expression evidence
   below for native script mapping and the separate speech retargeting lookup.
-  Fine texture edges are therefore approximate. Colours use ROM luma/colour
-  curves with a fixed native first-fight palette environment (offset 64, slope
+  Fine texture edges in that reference path are therefore approximate. Colours
+  use ROM luma/colour curves with a fixed native first-fight palette environment (offset 64, slope
   37, gain 128 and special-curve LUT offset -52), followed by VF3 lighting;
   dynamic VF2 stage colour translation is not reproduced.
   Each fighter selects its own native skin/costume and high-luma facial/hair
@@ -147,7 +149,7 @@ No test ROM or image is committed.
   and gameplay remain unchanged. This replaces Akira's fixed 0.03 extension
   and covers the missing source waist bridges during ordinary VF3 bends.
 - `src/video/vf1_akira.cpp` converts Model 1 coordinates into VF3 local space and
-  groups flat triangles by colour for the common CPU/GPU renderer. Opposite face
+  groups triangles by colour/material for the common CPU/GPU renderer. Opposite face
   normals preserve Model 1's mixed strip winding.
 - The scene builder retains the source culling node, nearest matrix index and
   viewport matrix-table address. These distinguish geometry that VF3 regenerates
@@ -542,3 +544,70 @@ confirm the fitted Jacky. Physical-device frame rate has not been measured.
 Local screenshots and benchmark logs remain ignored under
 `build/jacky-render-cost` and `build/vf2-waist`. No ROMs or decoded assets are
 committed or bundled.
+
+### Direct VF2 textures
+
+The default VF2 loader now retains original strip triangles, texel coordinates
+and immutable indexed materials for all ten fighters. It no longer subdivides
+the runtime geometry to approximate texture colours. The body meshes contain
+1,560–1,905 triangles per fighter; Jacky's separate authored hair has 268.
+The old decoder remains available with `textured=false` solely as a reference
+for existing local-ROM regressions.
+
+Each material contains the original four-bit indices and 128 native colour
+lookup entries. `Model2Texture::sample` and the GPU shader implement the same
+mirroring, wrapping, index/coverage interpolation and luminance lookup as the
+reference decoder. Eye/lip coverage is tested at 50% before colour lookup.
+Body sampling retains the reference decoder's nearest-index behavior. Lighting still comes
+from VF3. Materials retain full colour precision; neither coarser facial
+sampling nor smaller textures are used to obtain the triangle reduction.
+
+The same path handles body parts, hands, ribbons, rigid hair and all 669 facial
+recipes. Facial pieces store material IDs instead of thousands of coloured
+cells. Header lookups are cached while the source atlas is unchanged and
+invalidated whenever a different eye/mouth patch is installed. Static and
+identical materials are shared; each rendered scene keeps its own immutable
+references, so P1/P2 expressions and retained scenes cannot overwrite each
+other. Waist fitting and the existing source painter-order offsets remain.
+
+GPU materials occupy an appended region of the renderer's storage buffer;
+the native eight-megabyte texture RAM region and emulated memory are untouched.
+Only newly encountered tiles are uploaded. Buffer growth restores both regions,
+failed frames retry uploads, and retained imported tiles are cleared after
+the cache exceeds 32 MiB. Old scenes can repopulate the cache from their owned
+materials. CPU fallback samples the same material data. SPIR-V, DXIL and Metal
+shader artifacts are regenerated from the shared HLSL source.
+
+Three alternating desktop benchmark runs, relative to `ed67047`, measured:
+
+| Jacky scene | Prepared triangles before / after | CPU preparation before / after | Synchronized GPU path before / after |
+| --- | --- | --- | --- |
+| Selection preview | 37,543 / 629 | 0.467 / 0.041 ms | 1.280 / 0.274 ms |
+| Two VF2 fighters | 110,322 / 7,402 | 1.326 / 0.187 ms | 3.023 / 0.898 ms |
+
+The GPU timing includes CPU submission and waiting for completion; it is not
+pure shader execution or physical-device FPS. Jacky's decoded source now loads
+in about 49 ms on the same desktop. Ten-fighter captures show the new texture
+detail, while all 90 VF1/native comparison screenshots remain pixel-identical.
+
+Validation includes 128,000 exact comparisons against the original colour
+sampler; all ten bodies, 640 hands and 669 facial recipes; and 47 ROM-free
+CPU/Metal comparisons covering cutouts, wrap/mirror, cache reuse, growth,
+eviction, old-scene reuse and subsequent native texture uploads. The source
+checks also pass ASan/UBSan. Expression hashes now include texture contents,
+and the 65,000-frame native integration run passes 2,748 scene checks, including
+independent player expressions, speech, hurt and results. macOS, simulator and
+unsigned iOS device builds compile/link; macOS Metal and iOS simulator captures
+show the textured Jacky in selection, and macOS also exercises battle. Vulkan
+and Direct3D runtime execution and physical-device FPS were not measured.
+The final header-cache optimization was checked with another 65,000-frame run;
+all 91 captured expression/result images remain pixel-identical.
+
+```sh
+make -j4 build/bin/vf2-textures-test build/bin/model2-gpu-test
+build/bin/vf2-textures-test /path/to/vf2.zip
+build/bin/model2-gpu-test
+```
+
+Local evidence stays ignored under `build/vf2-textured`. ROMs, decoded tiles,
+native screenshots and downloaded shader tools are not committed or bundled.

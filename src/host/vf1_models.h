@@ -7,6 +7,8 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include <memory>
+#include "../core/model2_texture.h"
 
 namespace vf1_models {
 enum class Part {
@@ -16,6 +18,8 @@ enum class Part {
 struct Triangle {
     uint32_t colour;
     std::array<std::array<float, 3>, 3> points;
+    unsigned material=0; // one-based index into Assets::textures, zero is flat colour
+    std::array<std::array<float,2>,3> uv{}; // source texel coordinates
 };
 using Mesh = std::vector<Triangle>;
 struct Strand {
@@ -38,6 +42,7 @@ struct FaceAnimation {
     int loop_start=-1; // native next-node cycle; otherwise hold the final frame
 };
 struct Assets {
+    std::vector<std::shared_ptr<const Model2Texture>> textures;
     // Original skeleton offsets (slots 0..15), used to fit each fighter's limbs.
     std::array<std::array<float,3>,16> source_joints{};
     std::array<Mesh, size_t(Part::Count)> parts;

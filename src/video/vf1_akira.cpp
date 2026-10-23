@@ -29,9 +29,10 @@ constexpr Binding bindings[] = {
     {Part::FootB,     90, 0x42330, 2000, 2000, -2000, 0, 0x430a8},
     {Part::Head,       0, 0x509a0, 2000, 2000, -1800, -13, 0x51e58},
 };
-Meshes convert(const vf1_models::Mesh &source, const Binding &b, uint64_t key_base=0x5646310000000000ull)
+Meshes convert(const vf1_models::Mesh &source, const Binding &b, uint64_t key_base,
+               const std::vector<std::shared_ptr<const Model2Texture>> &textures)
 {
-    std::map<uint32_t, Mesh> groups;
+    std::map<std::pair<uint32_t,unsigned>, Mesh> groups;
     for (const auto &t : source) {
         Vertex v[3] = {};
         for (int i = 0; i < 3; ++i) {
@@ -42,16 +43,22 @@ Meshes convert(const vf1_models::Mesh &source, const Binding &b, uint64_t key_ba
             v[i].colour[1] = t.colour >> 8;
             v[i].colour[2] = t.colour;
             v[i].colour[3] = 255;
+            for(unsigned k=0;k<2;++k)v[i].uv[k]=t.uv[i][k];
         }
         float u[3], w[3];
         for (int k=0; k<3; ++k) { u[k]=v[1].pos[k]-v[0].pos[k]; w[k]=v[2].pos[k]-v[0].pos[k]; }
         float n[3] = {u[1]*w[2]-u[2]*w[1], u[2]*w[0]-u[0]*w[2], u[0]*w[1]-u[1]*w[0]};
         const float length=std::sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
         if (!(length > 1e-8f)) continue;
-        auto &mesh = groups[t.colour];
+        auto &mesh = groups[{t.colour,t.material}];
         mesh.lighting = true;
         mesh.two_sided = true;
-        mesh.key = key_base | (uint64_t(b.part) << 32) | t.colour;
+        mesh.key = key_base | (uint64_t(b.part) << 32) | (t.material?t.material:t.colour);
+        if(t.material) {
+            mesh.model2_texture=textures.at(t.material-1);
+            mesh.textured=true;mesh.alpha_test=true;
+            mesh.width=mesh.model2_texture->width;mesh.height=mesh.model2_texture->height;
+        }
         // Source strips have mixed winding. The common CPU/GPU preparation
         // supplies the reverse normal without storing and transforming every
         // triangle twice.
@@ -95,10 +102,11 @@ Point axis(const Mat4 &m,int col)
     if(n>1e-8f)for(float &x:p)x/=n;
     return p;
 }
-void append(Meshes &destination, const vf1_models::Mesh &mesh, unsigned identity, uint64_t key_base=0x5646310000000000ull)
+void append(Meshes &destination, const vf1_models::Mesh &mesh, unsigned identity, uint64_t key_base,
+            const std::vector<std::shared_ptr<const Model2Texture>> &textures)
 {
     const Binding b={Part(identity),0,0,1,1,1,0,0};
-    const auto converted=convert(mesh,b,key_base);
+    const auto converted=convert(mesh,b,key_base,textures);
     destination->insert(destination->end(),converted->begin(),converted->end());
 }
 // Skin/cloth bridges generated between VF3 limbs. VF1's parts already extend
@@ -133,6 +141,7 @@ bool Vf1Akira::load_assets(const vf1_models::Assets &assets, AkiraSource source,
         error="Akira source is missing a body part";return false;
     }
     const bool model2=source==AkiraSource::VF2;
+    source_textures=assets.textures;
     // VF2's .25/.25 arms and .39/.44 legs match VF3's joint distances at
     // exactly 2048 units per source unit. VF1 needs its per-part length fitting.
     const float units=model2 ? 2048.0f : 2000.0f;
@@ -144,8 +153,8 @@ bool Vf1Akira::load_assets(const vf1_models::Assets &assets, AkiraSource source,
         if(model2 && b.part==Part::Torso) {
             auto torso=assets.parts[size_t(b.part)];
             fit_vf2_waist(torso,assets.parts[size_t(Part::Pelvis)],assets.source_joints[2][0]);
-            next[size_t(b.part)]=convert(torso,b,key_base);
-        } else next[size_t(b.part)] = convert(assets.parts[size_t(b.part)], b,key_base);
+            next[size_t(b.part)]=convert(torso,b,key_base,source_textures);
+        } else next[size_t(b.part)] = convert(assets.parts[size_t(b.part)], b,key_base,source_textures);
     }
     decltype(hands) next_hands;
     std::array<bool,2> has_hands{};
@@ -153,7 +162,7 @@ bool Vf1Akira::load_assets(const vf1_models::Assets &assets, AkiraSource source,
         has_hands[side]=std::all_of(assets.hands[side].begin(),assets.hands[side].end(),[](const auto &m){return !m.empty();});
         if(has_hands[side])for(size_t pose=0;pose<32;++pose) {
             const Binding b={Part(32+side*32+pose),0,0,units,units,-units,0,0};
-            next_hands[side][pose]=convert(assets.hands[side][pose],b,key_base);
+            next_hands[side][pose]=convert(assets.hands[side][pose],b,key_base,source_textures);
         }
     }
     const auto valid_strand=[](const vf1_models::Strand &strand) {
@@ -187,7 +196,7 @@ bool Vf1Akira::load_assets(const vf1_models::Assets &assets, AkiraSource source,
                 distance+=strand.lengths[segment]*units;
             }
         }
-        append(next[size_t(model2 ? Part::Torso : Part::Pelvis)],belt,120,key_base);
+        append(next[size_t(model2 ? Part::Torso : Part::Pelvis)],belt,120,key_base,source_textures);
     }
     parts=std::move(next);hands=std::move(next_hands);ribbons=std::move(next_ribbons);
     unit_scale=units;head_z_scale=model2 ? -units : -1800;head_z_offset=model2 ? 0 : -13;
@@ -214,7 +223,7 @@ void Vf1Akira::load_faces(const vf1_models::Assets &assets)
         // share the head transform. Convert once and retain them in each cached
         // expression, avoiding per-frame tessellation and full-head copies.
         const Binding binding={Part(122),0,0,unit_scale,unit_scale,head_z_scale,head_z_offset,0};
-        static_head_accessory=convert(assets.head_accessory,binding,mesh_key_base);
+        static_head_accessory=convert(assets.head_accessory,binding,mesh_key_base,source_textures);
         auto &head=parts[size_t(Part::Head)];
         head->insert(head->end(),static_head_accessory->begin(),static_head_accessory->end());
     }
@@ -285,7 +294,7 @@ Meshes Vf1Akira::face_meshes(uint16_t frame) const
         geometry=&decoded;
     }
     auto &entry=*std::min_element(face_cache.begin(),face_cache.end(),[](const auto &a,const auto &b){return a.used<b.used;});
-    auto meshes=convert(*geometry,binding,key);
+    auto meshes=convert(*geometry,binding,key,source_textures);
     if(static_head_accessory)
         meshes->insert(meshes->end(),static_head_accessory->begin(),static_head_accessory->end());
     entry={frame,++face_clock,std::move(meshes)};
@@ -387,7 +396,7 @@ size_t Vf1Akira::apply(Scene &scene, unsigned outfit_mask, unsigned preview_mask
           }
         }
         auto head_with_ribbon=std::make_shared<std::vector<Mesh>>(*face_meshes(face_frames[outfit]));
-        append(head_with_ribbon,ribbon_geometry,121,mesh_key_base);
+        append(head_with_ribbon,ribbon_geometry,121,mesh_key_base,source_textures);
         for (auto &vp : scene.viewports) if (same_camera(vp)) for (auto &m : vp.models) {
             const int slot=int(m.matrix_index)-base;
             // The animated face occupies +1 in the selection head-only layout,
@@ -428,6 +437,7 @@ bool Vf1Akira::load_fighter_assets(const vf1_models::Assets &assets,AkiraSource 
     if(!layout.head_node) {error="Fighter skeleton has not been verified";return false;}
     constexpr float units=2048;
     const bool model2=source==AkiraSource::VF2;
+    source_textures=assets.textures;
     const uint64_t key=0x5700000000000000ull | (uint64_t(model2?2:1)<<48) | (uint64_t(fighter)<<40);
     constexpr unsigned bone[]={0,0,3,4,6,7,10,11,0,13,14,0,0};
     decltype(parts) next;
@@ -450,14 +460,14 @@ bool Vf1Akira::load_fighter_assets(const vf1_models::Assets &assets,AkiraSource 
             }
             if(model2)fit_vf2_waist(mesh,assets.parts[size_t(Part::Pelvis)],layout.shoulder_height/units);
         }
-        next[i]=convert(mesh,b,key);
+        next[i]=convert(mesh,b,key,source_textures);
     }
     decltype(hands) next_hands;
     std::array<bool,2> has_hands{};
     for(unsigned side=0;side<2;++side) {
         has_hands[side]=std::all_of(assets.hands[side].begin(),assets.hands[side].end(),[](const auto &m){return !m.empty();});
         if(has_hands[side])for(unsigned pose=0;pose<32;++pose)
-            next_hands[side][pose]=convert(assets.hands[side][pose],{Part(32+side*32+pose),0,0,units,units,-units,0,0},key);
+            next_hands[side][pose]=convert(assets.hands[side][pose],{Part(32+side*32+pose),0,0,units,units,-units,0,0},key,source_textures);
     }
     std::vector<vf1_models::Strand> head_chains;
     unsigned accessory_identity=128;
@@ -476,7 +486,7 @@ bool Vf1Akira::load_fighter_assets(const vf1_models::Assets &assets,AkiraSource 
             }
             distance+=chain.lengths[s]*units;
         }
-        append(next[size_t(chain.bone==1 ? Part::Torso : Part::Pelvis)],geometry,accessory_identity++,key);
+        append(next[size_t(chain.bone==1 ? Part::Torso : Part::Pelvis)],geometry,accessory_identity++,key,source_textures);
     };
     for(const auto &chain:assets.strands)add_chain(chain);
     for(const auto &chain:assets.extra_head_ribbons)add_chain(chain);
@@ -485,7 +495,7 @@ bool Vf1Akira::load_fighter_assets(const vf1_models::Assets &assets,AkiraSource 
         auto knot=assets.belt_knot;
         const auto &a=assets.strands[1].anchor,&b=assets.strands[2].anchor;
         for(auto &t:knot)for(auto &p:t.points)for(unsigned k=0;k<3;++k)p[k]=(p[k]+(a[k]+b[k])/2)*units*(k==2?-1:1);
-        append(next[size_t(Part::Pelvis)],knot,119,key);
+        append(next[size_t(Part::Pelvis)],knot,119,key,source_textures);
     }
     parts=std::move(next);hands=std::move(next_hands);ribbons=std::move(head_chains);
     replace_hands=has_hands;roster_fighter=fighter;model2_source=model2;mesh_key_base=key;
@@ -591,7 +601,7 @@ size_t Vf1Akira::apply_fighter(Scene &scene,unsigned outfit_mask,unsigned previe
                         for(unsigned k=0;k<3;++k)anchor[k]+=chain.lengths[segment]*2048*down[k];
                     }
                 }
-                append(with_hair,hair,121,mesh_key_base);
+                append(with_hair,hair,121,mesh_key_base,source_textures);
             }
             for(auto &v:scene.viewports)if(same_camera(v))for(auto &m:v.models) {
                 const bool owned=std::find(layout.owned_nodes.begin(),layout.owned_nodes.end(),m.source_node)!=layout.owned_nodes.end();

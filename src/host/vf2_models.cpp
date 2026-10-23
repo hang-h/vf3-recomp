@@ -34,6 +34,13 @@ constexpr Rom roms[] = {
     {"epr-18387.14",0x124a8453,CPU,0x40000,0x20000}, {"epr-18388.15",0x8d347980,CPU,0x40002,0x20000},
 };
 struct Decoder {
+    struct Materials {
+        std::map<std::vector<uint32_t>,unsigned> ids;
+        std::vector<std::shared_ptr<const Model2Texture>> textures;
+    };
+    bool textured=false;
+    std::shared_ptr<Materials> materials=std::make_shared<Materials>();
+    mutable std::map<std::array<unsigned,5>,unsigned> material_cache;
     struct PreparedFace {
         std::array<uint16_t,4> header{};
         std::array<Point,3> points{};
@@ -48,6 +55,33 @@ struct Decoder {
     std::vector<uint16_t> sheet;
     unsigned head_descriptor = 0x19c;
     unsigned native_actor = 0;
+    unsigned material(const std::array<uint16_t,4> &h,bool detail) const {
+        const std::array<unsigned,5> header={h[0],h[1],h[2],h[3],unsigned(detail)};
+        if(const auto found=material_cache.find(header);found!=material_cache.end())return found->second;
+        auto tile=std::make_shared<Model2Texture>();
+        tile->width=32u<<(h[0]&7);tile->height=32u<<((h[0]>>3)&7);
+        tile->flags=h[0]|(detail?0x10000:0);
+        if(tile->width>1024 || tile->height>1024 || !(h[2]&0x1000))
+            throw std::runtime_error("invalid VF2 material tile");
+        const auto pal=half(Main,0x100000+2*((h[3]>>6)&1023));
+        for(unsigned i=0;i<128;++i) {
+            const unsigned luma=std::min<unsigned>(*bytes(CPU,0x78d10+(h[1]&255)*128+i,1),63);
+            tile->words.push_back(0xff000000u|uint32_t(channel(pal&31,0,luma))<<16|
+                uint32_t(channel((pal>>5)&31,1,luma))<<8|channel((pal>>10)&31,2,luma));
+        }
+        for(unsigned y=0;y<tile->height;++y)for(unsigned x=0;x<tile->width;++x) {
+            unsigned sx=(x+32*(h[2]&63))&2047,sy=(y+32*((h[2]>>6)&31))&1023;
+            if(sx>=1024){sx-=1024;sy^=1024;}
+            const auto at=(size_t(sy>>1)<<9)+(sx>>1);
+            if(at>=sheet.size())throw std::runtime_error("VF2 material outside atlas");
+            tile->words.push_back((sheet[at]>>(((~sy&1)<<3)+((~sx&1)<<2)))&15);
+        }
+        auto key=tile->words;key.push_back(tile->width);key.push_back(tile->height);key.push_back(tile->flags);
+        auto [it,inserted]=materials->ids.emplace(std::move(key),unsigned(materials->textures.size()+1));
+        if(inserted)materials->textures.push_back(std::move(tile));
+        material_cache.emplace(header,it->second);
+        return it->second;
+    }
     const uint8_t *bytes(int region, size_t address, size_t count) const {
         const auto &r=regions[region];
         if(r.empty()) {
@@ -178,6 +212,14 @@ struct Decoder {
     }
     void face(Mesh &out,const std::array<uint16_t,4> &h,const Point &a,const Point &b,const Point &c,
               const UV &ua,const UV &ub,const UV &uc,unsigned depth,unsigned limit,bool detail=false) const {
+        if(textured) {
+            const size_t first=out.size();
+            triangle(out,(h[0]&0x4000)?0xffffffffu:colour(h,ua),a,b,c);
+            if(out.size()!=first && (h[0]&0x4000)) {
+                out.back().material=material(h,detail);out.back().uv={ua,ub,uc};
+            }
+            return;
+        }
         const UV center={(ua[0]+ub[0]+uc[0])/3,(ua[1]+ub[1]+uc[1])/3};
         const auto rgb=colour(h,center,detail);
         float extent=0;
@@ -314,6 +356,7 @@ void faces(const Decoder &source,vf1_models::Assets &out) {
     };
     auto recipe=std::make_shared<Recipe>();
     recipe->decoder.native_actor=source.native_actor;
+    recipe->decoder.textured=source.textured;recipe->decoder.materials=source.materials;
     recipe->decoder.sheet=source.sheet;
     std::map<Key,unsigned> bank;
     auto add=[&](Key key) {
@@ -452,7 +495,7 @@ void faces(const Decoder &source,vf1_models::Assets &out) {
             if(group.side) {
                 append(face.header);append(face.points);append(face.uv);append(face.limit);append(face.detail);
             } else for(const auto &triangle:face.fixed) {
-                append(triangle.colour);append(triangle.points);
+                append(triangle.colour);append(triangle.points);append(triangle.material);append(triangle.uv);
             }
         }
         auto [it,inserted]=group_ids.emplace(std::move(bytes),unsigned(groups.size()));
@@ -482,6 +525,9 @@ void faces(const Decoder &source,vf1_models::Assets &out) {
             if(inserted) {
                 Mesh mesh;
                 if(group.side) {
+                    // Header identities are reusable only while the source
+                    // atlas is unchanged. This piece installs another patch.
+                    baker.material_cache.clear();
                     // Zero means the untouched native atlas, not patch frame 0.
                     const unsigned x=group.side==1?64:0,width=group.side==1?32:64;
                     for(unsigned row=0;row<32;++row) {
@@ -530,11 +576,12 @@ void faces(const Decoder &source,vf1_models::Assets &out) {
     };
 }
 }
-bool load(const std::string &path,vf1_models::Assets &out,std::string &error,unsigned fighter) {
+bool load(const std::string &path,vf1_models::Assets &out,std::string &error,unsigned fighter,bool textured) {
     try {
         if(fighter>=10)throw std::runtime_error("unsupported VF2 fighter");
         rom_zip::zip z;if(!z.open(path))throw std::runtime_error("cannot read VF2 ZIP");
         Decoder d;
+        d.textured=textured;
         d.regions[Main].resize(0x1000000);d.regions[Polygons].resize(0xc00000);
         d.regions[Textures].resize(0xc00000,255);d.regions[CPU].resize(0x80000);
         std::vector<uint8_t> raw;
@@ -671,6 +718,7 @@ bool load(const std::string &path,vf1_models::Assets &out,std::string &error,uns
             portrait.pixels[y*48+x]=rgb;
         }
         faces(d,next);
+        next.textures=std::move(d.materials->textures);
         out=std::move(next);error.clear();return true;
     } catch(const std::exception &e) {error=e.what();return false;}
 }

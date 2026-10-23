@@ -427,6 +427,10 @@ struct Sampler
 	}
 	C4 bilinear(int level, float u, float v) const
 	{
+		if (mesh->model2_texture) {
+			const auto c = mesh->model2_texture->sample(u,v);
+			return { ((c>>16)&255)/255.f, ((c>>8)&255)/255.f, (c&255)/255.f, (c>>24)/255.f };
+		}
 		const float sw = float(mesh->width >> level), sh = float(mesh->height >> level);
 		const int px = bx >> level, py = by >> level;
 		float u0, u1, v0, v1;
@@ -470,7 +474,7 @@ void Raster::draw_tri(const Tri &T, int layer, int band0, int band1)
 	if (mesh.translator_map) { poly.r *= 16; poly.g *= 16; poly.b *= 16; }
 	const Sampler smp = { tex, &mesh, mesh.page ^ model.page, mesh.x, mesh.y };
 	const Sampler smp_flip = { tex, &mesh, mesh.page ^ model.page, mesh.flip_x, mesh.flip_y };
-	const float num_levels = mesh.textured ? std::floor(std::log2(float(std::min(mesh.width, mesh.height)))) - 1.0f : 0.0f;
+	const float num_levels = mesh.textured && !mesh.model2_texture ? std::floor(std::log2(float(std::min(mesh.width, mesh.height)))) - 1.0f : 0.0f;
 	static const float exp_index[4] = { 8, 16, 32, 64 }, mult_index[4] = { 1.6f, 1.6f, 2.4f, 3.2f };
 	const int shin = std::clamp(int(mesh.shininess), 0, 3);
 

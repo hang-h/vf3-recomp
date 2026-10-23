@@ -26,6 +26,9 @@ uint64_t geometry_hash(const video::Meshes &meshes)
     uint64_t result=1469598103934665603ull;
     auto byte=[&](uint8_t value){result=(result^value)*1099511628211ull;};
     for(const auto &mesh:*meshes) {
+        if(mesh.model2_texture)for(auto value:mesh.model2_texture->words)
+            for(unsigned i=0;i<4;++i)byte(uint8_t(value>>(8*i)));
+
         for(unsigned i=0;i<8;++i)byte(uint8_t(mesh.key>>(8*i)));
         for(const auto &vertex:mesh.verts) {
             for(float coordinate:vertex.pos) {

@@ -32,6 +32,7 @@ private:
     void load_faces(const vf1_models::Assets &);
     Meshes face_meshes(uint16_t frame) const;
     std::vector<vf1_models::Mesh> source_faces;
+    std::vector<std::shared_ptr<const Model2Texture>> source_textures;
     unsigned face_frame_count=0;
     std::function<vf1_models::Mesh(unsigned)> decode_face;
     std::array<vf1_models::FaceAnimation,10> face_animations;

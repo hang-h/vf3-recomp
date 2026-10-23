@@ -62,7 +62,7 @@ int main(int argc, char **argv)
     try {
         vf1_models::Assets models;
         std::string error;
-        require(vf2_models::load(argv[1], models, error), "decode: " + error);
+        require(vf2_models::load(argv[1], models, error, 0, false), "decode: " + error);
         require(models.portrait.available() && models.portrait.width==48 && models.portrait.height==88,
                 "missing original VF2 select portrait");
         bool coloured=false;
@@ -115,7 +115,7 @@ int main(int argc, char **argv)
         unsigned expression_frames=0;
         for(unsigned fighter=0;fighter<10;++fighter) {
             vf1_models::Assets roster;
-            require(vf2_models::load(argv[1],roster,error,fighter),std::string(names[fighter])+": "+error);
+            require(vf2_models::load(argv[1],roster,error,fighter,false),std::string(names[fighter])+": "+error);
             require(roster.portrait.available() && roster.portrait.width==48 && roster.portrait.height==88,
                     std::string(names[fighter])+": missing original select portrait");
             require(portraits.insert(roster.portrait.pixels).second,"fighter reused another portrait");
@@ -212,14 +212,14 @@ int main(int argc, char **argv)
             if(fighter)require(!equal_mesh(roster.parts.back(),reference.parts.back()),"fighter reused Akira's head");
             else require(equal(roster,reference),"explicit Akira differs from default load");
         }
-        require(!vf2_models::load(argv[1],models,error,10) && !error.empty() && equal(models,reference),
+        require(!vf2_models::load(argv[1],models,error,10,false) && !error.empty() && equal(models,reference),
                 "unsupported fighter changed destination");
         temp_folder temp;
-        require(!vf2_models::load((temp.path / "missing.zip").string(), models, error), "missing ZIP accepted");
+        require(!vf2_models::load((temp.path / "missing.zip").string(), models, error, 0, false), "missing ZIP accepted");
         require(!error.empty() && equal(models, reference), "missing ZIP changed destination");
         const auto invalid = temp.path / "invalid.zip";
         { std::ofstream stream(invalid); stream << "not a ZIP"; }
-        require(!vf2_models::load(invalid.string(), models, error), "invalid ZIP accepted");
+        require(!vf2_models::load(invalid.string(), models, error, 0, false), "invalid ZIP accepted");
         require(!error.empty() && equal(models, reference), "invalid ZIP changed destination");
 
         rom_zip::zip zip;
@@ -237,9 +237,9 @@ int main(int argc, char **argv)
         const auto damaged = temp.path / "damaged.zip";
         { std::ofstream stream(damaged, std::ios::binary);
           stream.write(reinterpret_cast<const char *>(zip.data.data()), std::streamsize(zip.data.size())); }
-        require(!vf2_models::load(damaged.string(), models, error), "corrupted payload accepted");
+        require(!vf2_models::load(damaged.string(), models, error, 0, false), "corrupted payload accepted");
         require(!error.empty() && equal(models, reference), "corrupted ZIP changed destination");
-        require(vf2_models::load(argv[1], models, error) && error.empty() && equal(models, reference),
+        require(vf2_models::load(argv[1], models, error, 0, false) && error.empty() && equal(models, reference),
                 "repeat load differs or retains error");
         std::cout << models.parts.size() << " unscaled Akira parts, " << total
                   << " triangles preserved; all 10 VF2 fighters, 640 native hand poses, portraits, skeletons and accessories; "

@@ -26,6 +26,9 @@ uint64_t hash(const video::Meshes &meshes)
     uint64_t result=1469598103934665603ull;
     auto byte=[&](uint8_t b){result=(result^b)*1099511628211ull;};
     for(const auto &mesh:*meshes) {
+        if(mesh.model2_texture)for(auto value:mesh.model2_texture->words)
+            for(unsigned i=0;i<4;++i)byte(uint8_t(value>>(8*i)));
+
         for(const auto &v:mesh.verts) {
             for(float coordinate:v.pos) {
                 uint32_t bits;std::memcpy(&bits,&coordinate,4);

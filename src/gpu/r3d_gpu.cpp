@@ -34,7 +34,7 @@ struct GVp
 	float sun[4], light[4], spot_ellipse[4], spot_range[4], spot_colour[4], spot_fog_colour[4], fog[4], fog2[4];
 };
 
-enum : uint32_t { F_TEXTURED = 1, F_ALPHA_TEST = 2, F_TEX_ALPHA = 4, F_LIGHTING = 8, F_FIXED = 16, F_SMOOTH = 32, F_SPECULAR = 64, F_INVERTED = 128 };
+enum : uint32_t { F_TEXTURED = 1, F_ALPHA_TEST = 2, F_TEX_ALPHA = 4, F_LIGHTING = 8, F_FIXED = 16, F_SMOOTH = 32, F_SPECULAR = 64, F_INVERTED = 128, F_MODEL2 = 256 };
 
 const float NEAR = 1e-3f;
 
@@ -55,6 +55,7 @@ void R3dGpu::shutdown()
 	if (sampler) SDL_ReleaseGPUSampler(dev, sampler);
 	p_opq = p_opq_l = p_tr = p_tr_l = p_fog = p_out = nullptr;
 	vbuf = dbuf = pbuf = texram = nullptr;
+    texram_size=imported_bytes=0;imported.clear();imported_offsets.clear();imported_dirty=true;
 	tb = nullptr;
 	sampler = nullptr;
 	dev = nullptr;
@@ -194,6 +195,7 @@ bool R3dGpu::init(SDL_GPUDevice *device)
 	bi.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
 	bi.size = 2048 * 2048 * 2;
 	texram = SDL_CreateGPUBuffer(dev, &bi);
+    texram_size=bi.size;
 	if (!sampler || !texram) { err = std::string("its buffers: ") + SDL_GetError(); return false; }
 	texram_full = true;
 	return true;
@@ -270,6 +272,27 @@ bool R3dGpu::render(const video::Scene &scene, const video::Raster &prep, const 
 	const auto t0 = std::chrono::steady_clock::now();
 	if (!make_targets(prep.width(), prep.height(), ss)) return false;
 	using video::Raster;
+    constexpr uint32_t native_bytes=2048*2048*2;
+    // Keep immutable imported tiles resident across frames/expressions. Bound
+    // retention across roster changes; published scenes own their CPU tiles.
+    if(imported_bytes>32*1024*1024) {
+        imported.clear();imported_offsets.clear();imported_bytes=0;imported_dirty=true;
+    }
+    const size_t old_imported=imported.size();
+    for(const auto &draw:prep.draws)if(const auto &texture=draw.mesh->model2_texture) {
+        if(imported_offsets.contains(texture.get()))continue;
+        const uint32_t offset=native_bytes+imported_bytes;
+        imported_offsets.emplace(texture.get(),offset);imported.push_back({texture,offset});
+        imported_bytes+=uint32_t(texture->words.size()*4);
+    }
+    if(texram_size<native_bytes+imported_bytes) {
+        if(!ensure_buffer(texram,texram_size,native_bytes+imported_bytes,SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ))return false;
+        texram_full=true;imported_dirty=true;
+    }
+    const size_t first_imported=imported_dirty?0:old_imported;
+    imported_dirty=true; // any failed frame must retry all resident tiles
+    uint32_t imported_upload_bytes=0;
+    for(size_t i=first_imported;i<imported.size();++i)imported_upload_bytes+=uint32_t(imported[i].texture->words.size()*4);
 	// ---- the vertices, meshes' and viewports' state ----
 	std::vector<GDraw> gd(prep.draws.size());
 	std::vector<GVp> gv(std::max<size_t>(1, scene.viewports.size()));
@@ -306,6 +329,10 @@ bool R3dGpu::render(const video::Scene &scene, const video::Raster &prep, const 
 		o.shininess = m.shininess; o.spec_value = m.specular_value; o.fog_intensity = m.fog_intensity;
 		o.vp = uint32_t(d.vp - scene.viewports.data());
 		o.flip = m.flip; o.flip_x = m.flip_x; o.flip_y = m.flip_y;
+        if(m.model2_texture) {
+            o.flags|=F_MODEL2;o.tx=int(imported_offsets.at(m.model2_texture.get()));
+            o.ty=int(m.model2_texture->flags);o.levels=0;
+        }
 	}
 	// each polygon (a triangle, or four sides after the near plane) as triangles; their raw attributes (the
 	// prepared ones are over w) and clip positions in their viewport's projection
@@ -369,7 +396,7 @@ bool R3dGpu::render(const video::Scene &scene, const video::Raster &prep, const 
 		!ensure_buffer(dbuf, dbuf_size, dbytes, SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ) ||
 		!ensure_buffer(pbuf, pbuf_size, pbytes, SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ))
 		return false;
-	const uint32_t total = vbytes + dbytes + pbytes + tbytes;
+	const uint32_t total = vbytes + dbytes + pbytes + tbytes + imported_upload_bytes;
 	if (!tb || tb_size < total) {
 		if (tb) SDL_ReleaseGPUTransferBuffer(dev, tb);
 		SDL_GPUTransferBufferCreateInfo ti = {};
@@ -390,6 +417,10 @@ bool R3dGpu::render(const video::Scene &scene, const video::Raster &prep, const 
 			memcpy(map + at, tex_ram.data() + size_t(r.first) * 2048, size_t(r.second) * 4096);
 			at += r.second * 4096;
 		}
+        for(size_t i=first_imported;i<imported.size();++i) {
+            const auto &words=imported[i].texture->words;
+            memcpy(map+at,words.data(),words.size()*4);at+=uint32_t(words.size()*4);
+        }
 	}
 	SDL_UnmapGPUTransferBuffer(dev, tb);
 	SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(dev);
@@ -407,6 +438,10 @@ bool R3dGpu::render(const video::Scene &scene, const video::Raster &prep, const 
 		up(vbytes + dbytes, pbuf, 0, pbytes);
 		uint32_t at = vbytes + dbytes + pbytes;
 		for (auto &r : rows) { up(at, texram, r.first * 4096, r.second * 4096); at += r.second * 4096; }
+        for(size_t i=first_imported;i<imported.size();++i) {
+            const auto &tile=imported[i];const auto n=uint32_t(tile.texture->words.size()*4);
+            up(at,texram,tile.offset,n);at+=n;
+        }
 		SDL_EndGPUCopyPass(cp);
 	}
 	// ---- the passes ----
@@ -580,6 +615,7 @@ bool R3dGpu::render(const video::Scene &scene, const video::Raster &prep, const 
 	last_cpu_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 	if (!SDL_SubmitGPUCommandBuffer(cmd)) { err = std::string("submitting: ") + SDL_GetError(); return false; }
 	texram_full = false;
+    imported_dirty=false;
 	return true;
 }
 

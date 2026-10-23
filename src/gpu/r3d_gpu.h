@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 #include "../machine/model3.h"
 
@@ -55,6 +56,11 @@ private:
 	SDL_GPUTransferBuffer *tb = nullptr;
 	uint32_t tb_size = 0;
 	bool texram_full = true;
+    uint32_t texram_size=0, imported_bytes=0;
+    bool imported_dirty=true;
+    struct Imported {std::shared_ptr<const Model2Texture> texture;uint32_t offset;};
+    std::vector<Imported> imported;
+    std::unordered_map<const Model2Texture*,uint32_t> imported_offsets;
 	struct GV { float clip[4], view[3], normal[3], misc[4], lodbase; uint32_t draw; };
 	std::vector<GV> verts;
 	void free_targets();

@@ -74,9 +74,13 @@ uint64_t head_hash(const video::Meshes &meshes)
 {
     uint64_t result=1469598103934665603ull;
     auto add=[&](uint8_t byte){result=(result^byte)*1099511628211ull;};
-    for(const auto &mesh:*meshes)for(const auto &v:mesh.verts) {
+    for(const auto &mesh:*meshes) {
+        if(mesh.model2_texture)for(auto value:mesh.model2_texture->words)
+            for(unsigned i=0;i<4;++i)add(uint8_t(value>>(8*i)));
+        for(const auto &v:mesh.verts) {
         for(float x:v.pos) {uint32_t bits;std::memcpy(&bits,&x,4);for(unsigned i=0;i<4;++i)add(uint8_t(bits>>(8*i)));}
         for(auto c:v.colour)add(c);
+        }
     }
     return result;
 }
