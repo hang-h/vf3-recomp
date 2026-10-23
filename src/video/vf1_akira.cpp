@@ -209,6 +209,16 @@ void Vf1Akira::load_faces(const vf1_models::Assets &assets)
     face_states=assets.face_states;
     face_speech=assets.face_speech;
     face_cache={};face_clock=0;
+    static_head_accessory.reset();
+    if(!assets.head_accessory.empty()) {
+        // Authored head-local attachments (such as VF2 Jacky's static hair)
+        // share the head transform. Convert once and retain them in each cached
+        // expression, avoiding per-frame tessellation and full-head copies.
+        const Binding binding={Part(122),0,0,unit_scale,unit_scale,head_z_scale,head_z_offset,0};
+        static_head_accessory=convert(assets.head_accessory,binding,mesh_key_base);
+        auto &head=parts[size_t(Part::Head)];
+        head->insert(head->end(),static_head_accessory->begin(),static_head_accessory->end());
+    }
 }
 
 uint16_t Vf1Akira::face_animation_frame(unsigned animation,unsigned step) const
@@ -276,7 +286,10 @@ Meshes Vf1Akira::face_meshes(uint16_t frame) const
         geometry=&decoded;
     }
     auto &entry=*std::min_element(face_cache.begin(),face_cache.end(),[](const auto &a,const auto &b){return a.used<b.used;});
-    entry={frame,++face_clock,convert(*geometry,binding,key)};
+    auto meshes=convert(*geometry,binding,key);
+    if(static_head_accessory)
+        meshes->insert(meshes->end(),static_head_accessory->begin(),static_head_accessory->end());
+    entry={frame,++face_clock,std::move(meshes)};
     return entry.meshes;
 }
 
@@ -544,39 +557,42 @@ size_t Vf1Akira::apply_fighter(Scene &scene,unsigned outfit_mask,unsigned previe
             if(invalid)continue;
             Mat4 inverse_head;
             if(!inverse(head.matrix,inverse_head))continue;
-            auto with_hair=std::make_shared<std::vector<Mesh>>(*face_meshes(face_frames[outfit]));
-            vf1_models::Mesh hair;
-            for(size_t chain_index=0;chain_index<ribbons.size();++chain_index) {
-                const auto &chain=ribbons[chain_index];
-                Point anchor={chain.anchor[0]*2048,chain.anchor[1]*2048,-chain.anchor[2]*2048};
-                for(size_t segment=0;segment<chain.segments.size();++segment) {
-                    Point down=chain.rest_direction,thickness={1,0,0},width={0,1,0};
-                    if(!layout.head_cloth.empty()) {
-                        const auto &binding=layout.head_cloth[std::min(layout.head_cloth.size()-1,
-                            (chain_index*chain.segments.size()+segment)*layout.head_cloth.size()/(ribbons.size()*chain.segments.size()))];
-                        for(auto &v:scene.viewports)if(same_camera(v))for(auto &m:v.models)if(m.source_node==binding.node) {
-                            auto local_axis=[&](unsigned col) {
-                                Point p{};const auto direction=axis(m.matrix,int(col));
-                                for(unsigned r=0;r<3;++r)for(unsigned c=0;c<3;++c)p[r]+=inverse_head.m[c*4+r]*direction[c];
-                                const float length=std::sqrt(p[0]*p[0]+p[1]*p[1]+p[2]*p[2]);
-                                if(length>1e-8f)for(auto &x:p)x/=length;
-                                return p;
-                            };
-                            down=local_axis(0);thickness=local_axis(1);width=local_axis(2);
+            auto with_hair=face_meshes(face_frames[outfit]);
+            if(!ribbons.empty()) {
+                with_hair=std::make_shared<std::vector<Mesh>>(*with_hair);
+                vf1_models::Mesh hair;
+                for(size_t chain_index=0;chain_index<ribbons.size();++chain_index) {
+                    const auto &chain=ribbons[chain_index];
+                    Point anchor={chain.anchor[0]*2048,chain.anchor[1]*2048,-chain.anchor[2]*2048};
+                    for(size_t segment=0;segment<chain.segments.size();++segment) {
+                        Point down=chain.rest_direction,thickness={1,0,0},width={0,1,0};
+                        if(!layout.head_cloth.empty()) {
+                            const auto &binding=layout.head_cloth[std::min(layout.head_cloth.size()-1,
+                                (chain_index*chain.segments.size()+segment)*layout.head_cloth.size()/(ribbons.size()*chain.segments.size()))];
+                            for(auto &v:scene.viewports)if(same_camera(v))for(auto &m:v.models)if(m.source_node==binding.node) {
+                                auto local_axis=[&](unsigned col) {
+                                    Point p{};const auto direction=axis(m.matrix,int(col));
+                                    for(unsigned r=0;r<3;++r)for(unsigned c=0;c<3;++c)p[r]+=inverse_head.m[c*4+r]*direction[c];
+                                    const float length=std::sqrt(p[0]*p[0]+p[1]*p[1]+p[2]*p[2]);
+                                    if(length>1e-8f)for(auto &x:p)x/=length;
+                                    return p;
+                                };
+                                down=local_axis(0);thickness=local_axis(1);width=local_axis(2);
+                            }
                         }
-                    }
-                    for(auto t:chain.segments[segment]) {
-                        for(auto &p:t.points) {
-                            Point q=anchor;
-                            for(unsigned k=0;k<3;++k)q[k]+=2048*((model2_source?p[1]:-p[1])*down[k]+p[0]*thickness[k]+p[2]*width[k]);
-                            p=q;
+                        for(auto t:chain.segments[segment]) {
+                            for(auto &p:t.points) {
+                                Point q=anchor;
+                                for(unsigned k=0;k<3;++k)q[k]+=2048*((model2_source?p[1]:-p[1])*down[k]+p[0]*thickness[k]+p[2]*width[k]);
+                                p=q;
+                            }
+                            hair.push_back(t);
                         }
-                        hair.push_back(t);
+                        for(unsigned k=0;k<3;++k)anchor[k]+=chain.lengths[segment]*2048*down[k];
                     }
-                    for(unsigned k=0;k<3;++k)anchor[k]+=chain.lengths[segment]*2048*down[k];
                 }
+                append(with_hair,hair,121,mesh_key_base);
             }
-            append(with_hair,hair,121,mesh_key_base);
             for(auto &v:scene.viewports)if(same_camera(v))for(auto &m:v.models) {
                 const bool owned=std::find(layout.owned_nodes.begin(),layout.owned_nodes.end(),m.source_node)!=layout.owned_nodes.end();
                 if(owned || m.source_node==layout.face_node)m.meshes=empty;

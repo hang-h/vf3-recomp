@@ -46,8 +46,9 @@ void check(const char *zip,video::AkiraSource source,unsigned fighter)
     require(count>2,"missing expression bank");
     video::Vf1Akira model;require(model.load_assets(assets,source,error,fighter),error.c_str());model.enabled=true;
     const auto animations=assets.face_animations;
+    const bool rigid_hair=!assets.head_accessory.empty();
     assets={}; // the renderer must own its source frames and lazy recipe
-    video::Meshes retained;uint64_t retained_hash=0,neutral=0;std::set<uint64_t> variants;
+    video::Meshes retained;uint64_t retained_hash=0,neutral=0,hair_hash=0;std::set<uint64_t> variants;
     for(unsigned frame=0;frame<count;++frame) {
         video::Scene scene;scene.viewports={preview(fighter,0),preview(fighter,1)};
         const auto untouched=scene.viewports[0].models[2].meshes;
@@ -57,6 +58,17 @@ void check(const char *zip,video::AkiraSource source,unsigned fighter)
         if(!frame)neutral=hash(left);
         require(hash(right)==neutral,"one player's expression changed the other player");
         variants.insert(hash(left));
+        if(rigid_hair) {
+            auto hair=std::make_shared<std::vector<video::Mesh>>();
+            for(const auto &mesh:*left)if(((mesh.key>>32)&255)==122)hair->push_back(mesh);
+            require(!hair->empty(),"authored hair disappeared from a facial frame");
+            if(!frame)hair_hash=hash(hair);
+            require(hash(hair)==hair_hash,"expression distorted authored hair");
+            video::Scene repeated;repeated.viewports={preview(fighter,0)};
+            require(model.apply(repeated,0,1,{uint16_t(frame),0})==1 &&
+                    repeated.viewports[0].models[0].meshes==left,
+                    "rigid head was rebuilt instead of reusing its cached geometry");
+        }
         if(frame==1){retained=left;retained_hash=hash(left);}
         for(unsigned player=0;player<2;++player) {
             require(scene.viewports[player].models[1].meshes->empty(),"VF3 face remains over source expression");
@@ -90,7 +102,10 @@ int main(int argc,char **argv)
     if(argc!=3 && argc!=4){std::fprintf(stderr,"usage: fighter-expressions-test vf.zip vf2.zip [1|2]\n");return 2;}
     try {
         if(argc==3 || std::string(argv[3])=="1")check(argv[1],video::AkiraSource::VF1,1);
-        if(argc==3 || std::string(argv[3])=="2")check(argv[2],video::AkiraSource::VF2,2);
+        if(argc==3 || std::string(argv[3])=="2") {
+            check(argv[2],video::AkiraSource::VF2,2);
+            check(argv[2],video::AkiraSource::VF2,7);
+        }
     }
     catch(const std::exception &e){std::fprintf(stderr,"%s\n",e.what());return 1;}
 }

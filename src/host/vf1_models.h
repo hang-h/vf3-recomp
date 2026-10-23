@@ -43,6 +43,7 @@ struct Assets {
     std::array<Mesh, size_t(Part::Count)> parts;
     std::array<std::array<Mesh, 32>, 2> hands; // A (+0x22), B (+0x2e), closed to open
     Mesh belt_knot;
+    Mesh head_accessory; // authored rigid geometry in the source head's local space
     std::array<Strand, 3> strands; // headband ribbon, two belt tails
     std::vector<Strand> extra_head_ribbons; // VF2 has a second, five-segment ribbon
     std::vector<Strand> extra_strands; // Other torso/pelvis accessories in the roster

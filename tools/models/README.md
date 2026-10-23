@@ -31,8 +31,9 @@ brows move with their original expression scripts; independent VF3 eye/brow morp
 are not transplanted. VF1 Kage retains the original concealed mask policy; VF2 Kage
 can animate his visible eyes while keeping the mask.
 Other fighters currently use rigid source hair/accessory chains, without their
-original cloth physics. VF2 Jacky's tufts use the upward rest direction indicated
-by their native accessory force, rather than the hanging-braid fallback. Both VF3 outfits use the source game's P1 geometry and palette.
+original cloth physics. VF2 Jacky uses his authored rigid selection hair in all
+poses; the original fifteen spring-driven battle tufts are not simulated. Both
+VF3 outfits use the source game's P1 geometry and palette.
 Unknown/ambiguous skeleton layouts stay original. Visible, recognised limbs are
 replaced even when the camera culls the feet in a victory close-up. The selection
 screen changes both the 3D head and the original ROM portrait in the corresponding roster
@@ -466,3 +467,31 @@ the recorded Xcode toolchain commands. No physical-device run was performed
 for this change. Source-decoder ASan/UBSan checks and the RAM-to-renderer hover
 ownership regression also pass. ROMs and decoded assets remain external and
 are not committed or bundled.
+
+### VF2 Jacky hair and frame cost
+
+VF2's native selection display list draws Jacky's head (`0x80944b`) and authored
+hair (`0xaa4fed`, descriptor `0x13cb`) with identical matrices. The hair descriptor
+comes from the source selection accessory table at `0x61b8 + actor * 4`. This
+preserves the original spread and hairline instead of directing every battle
+tuft upward, which produced a narrow, distorted crest. The attachment is decoded
+from the external ROM in head-local space and retained through every facial
+frame. It stays rigid in battle; original spring motion remains unsupported.
+
+The renderer converts this attachment once, includes it in each cached face,
+and reuses the combined mesh while that expression stays unchanged. It no longer
+transforms and converts fifteen strands or copies the whole head on every frame.
+In an optimized desktop benchmark with two VF2 Jackys, replacement CPU time fell
+from 1.34 ms to 0.022 ms. This isolates model replacement, not total frame time
+or physical-device FPS. Original texture subdivision is retained; a coarser
+experiment reduced triangles but visibly degraded selection-screen hair detail.
+
+Validation includes the native source capture, five VF3 selection/battle scenes,
+a 6,500-frame Jacky run covering results and speech, all 48 facial variants with
+unchanged hair, and a regression requiring mesh reuse across repeated draws.
+The all-roster source decoder and existing ownership/cache tests also pass.
+Final macOS Metal and iOS simulator selection captures show the authored hair;
+macOS, simulator and unsigned device builds compile and link. Physical-device
+frame rate still requires an on-device check.
+Ignored evidence is in `build/jacky-fix` and `build/jacky-performance`; the native
+REA process capture is `ev_35bbf5009fb2ac371f281d4512defe4f64ca968f0c70e17cbf9bd2f44244c2e2`.

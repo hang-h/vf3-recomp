@@ -33,7 +33,7 @@ bool equal(const vf1_models::Assets &a, const vf1_models::Assets &b)
     for(size_t part=0;part<a.parts.size();++part)if(!equal_mesh(a.parts[part],b.parts[part]))return false;
     for(size_t side=0;side<2;++side)for(size_t pose=0;pose<32;++pose)
         if(!equal_mesh(a.hands[side][pose],b.hands[side][pose]))return false;
-    if(!equal_mesh(a.belt_knot,b.belt_knot))return false;
+    if(!equal_mesh(a.belt_knot,b.belt_knot) || !equal_mesh(a.head_accessory,b.head_accessory))return false;
     const auto same_strand=[](const auto &x,const auto &y) {
         if(x.bone!=y.bone || x.anchor!=y.anchor || x.lengths!=y.lengths ||
            x.rest_direction!=y.rest_direction)return false;
@@ -109,7 +109,7 @@ int main(int argc, char **argv)
         }
         const auto reference = models;
         constexpr const char *names[]={"Akira","Pai","Lau","Wolf","Jeffry","Kage","Sarah","Jacky","Shun","Lion"};
-        constexpr unsigned head_chains[]={2,2,1,1,6,2,3,15,2,3};
+        constexpr unsigned head_chains[]={2,2,1,1,6,2,3,0,2,3};
         constexpr unsigned body_chains[]={2,0,0,0,0,2,0,0,1,4};
         std::set<std::vector<uint32_t>> portraits;
         unsigned expression_frames=0;
@@ -180,8 +180,7 @@ int main(int argc, char **argv)
             auto chain=[&](const vf1_models::Strand &s) {
                 if(s.segments.empty())return;
                 require(s.bone==1 || s.bone==2 || s.bone==9,"invalid native accessory attachment");
-                require(s.rest_direction==std::array<float,3>{0,0,fighter==7?1.f:-1.f},
-                        "upright hair was treated as a hanging braid");
+                require(s.rest_direction==std::array<float,3>{0,0,-1},"invalid accessory rest direction");
                 (s.bone==2?heads:bodies)++;
                 require(s.segments.size()==s.lengths.size(),"accessory segment/length mismatch");
                 for(size_t i=0;i<s.segments.size();++i) {
@@ -199,6 +198,16 @@ int main(int argc, char **argv)
             for(const auto &s:roster.extra_strands)chain(s);
             require(heads==head_chains[fighter] && bodies==body_chains[fighter],
                     std::string(names[fighter])+": native accessories omitted or duplicated");
+            require(roster.head_accessory.empty()==(fighter!=7),"rigid hair attached to the wrong fighter");
+            if(fighter==7) {
+                std::array<float,3> lo={9,9,9},hi={-9,-9,-9};
+                for(const auto &t:roster.head_accessory)for(const auto &p:t.points)for(unsigned k=0;k<3;++k) {
+                    require(std::isfinite(p[k]),"non-finite authored hair vertex");
+                    lo[k]=std::min(lo[k],p[k]);hi[k]=std::max(hi[k],p[k]);
+                }
+                require(hi[1]-lo[1]>.2f && lo[2]<-.3f && hi[2]<0,
+                        "Jacky's authored hair lost its spread or head-local position");
+            }
             if(fighter==8)require(white_beard_triangles>0,"Shun's source white beard is missing");
             if(fighter)require(!equal_mesh(roster.parts.back(),reference.parts.back()),"fighter reused Akira's head");
             else require(equal(roster,reference),"explicit Akira differs from default load");

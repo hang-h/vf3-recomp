@@ -587,6 +587,13 @@ bool load(const std::string &path,vf1_models::Assets &out,std::string &error,uns
             strand(next.extra_head_ribbons[0],2,0x67bd8,0x67d6c,5);
             strand(next.strands[1],1,0x67a98,0x67ac0,2);
             strand(next.strands[2],1,0x67b38,0x67b60,2);
+        } else if(fighter==7) {
+            // Jacky's authored selection hair shares the head matrix in VF2.
+            // The fifteen battle tufts require the original spring transforms;
+            // pointing them all upward produces an incorrect narrow crest.
+            // Keep the original rigid silhouette in every destination pose.
+            for(auto &s:next.strands) {s.segments.clear();s.lengths.clear();}
+            next.head_accessory=d.part(d.word(Main,0x61b8+d.native_actor*4),3);
         } else {
             // VF2's bounded accessory bytecode: 4 starts a chain, 5 appends
             // a segment. Commands 1..3 configure native cloth simulation;
@@ -624,14 +631,6 @@ bool load(const std::string &path,vf1_models::Assets &out,std::string &error,uns
                     const auto length=d.scalar(at+40);
                     if(length<=0)throw std::runtime_error("invalid VF2 accessory length");
                     current.lengths.push_back(length);
-                    // Jacky's fifteen single-segment tufts have upward native
-                    // force (0,+.016,0), unlike hanging braids. i960 651bc
-                    // adds this to transformed gravity before normalizing the
-                    // segment direction. Keep their upright rigid rest shape;
-                    // VF3 head-local +Z points up after the source Z reflection.
-                    if(fighter==7 && current.bone==2 && d.scalar(at+44)==0 &&
-                       d.scalar(at+48)>0 && d.scalar(at+52)==0)
-                        current.rest_direction={0,0,1};
                 }
                 at+=command_bytes[op];
             }

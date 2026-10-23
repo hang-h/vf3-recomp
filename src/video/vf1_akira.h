@@ -37,6 +37,7 @@ private:
     std::array<vf1_models::FaceAnimation,10> face_animations;
     std::array<uint16_t,3> face_states{};
     std::vector<uint16_t> face_speech;
+    Meshes static_head_accessory;
     struct FaceCacheEntry {uint16_t frame=0; uint64_t used=0; Meshes meshes;};
     mutable std::array<FaceCacheEntry,4> face_cache{};
     mutable uint64_t face_clock=0;
