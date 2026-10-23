@@ -737,6 +737,7 @@ struct Game
 	video::FighterAppearances vf1_akira{video::AkiraSource::VF1};
 	video::FighterAppearances vf2_akira{video::AkiraSource::VF2};
 	AkiraSelection akira_selection;
+	fighter_expression::Tracker expressions;
 	bool force_vf1_akira = false, force_vf2_akira = false;
 	unsigned appearance_mask = 0, vf2_appearance_mask = 0, selection_hint_mask = 0;
 	std::array<unsigned,2> appearance_fighters{255,255};
@@ -859,6 +860,7 @@ struct Game
 		sound_out.clear();
 		board.reset();
 		akira_selection.reset();
+		expressions.reset();
 		appearance_mask = vf2_appearance_mask = 0;
 		sound.reset();
 		builder.clear_cache();
@@ -897,6 +899,7 @@ struct Game
 		}
 		sound_cv.notify_all();
 		frame++;
+		expressions.update(fighter_expression::snapshot(board.ram));
 		if (!picture) { have_prev = false; sky.reset(); return; }
 		newest ^= 1;
 		builder.build(board, scene[newest]);
@@ -912,9 +915,9 @@ struct Game
 		    };
 		    const unsigned vf1=owners(next_mask),vf2=owners(next_vf2_mask);
 		    vf1_akira.apply(scene[newest], force_vf1_akira ? (fighter==0 ? 3 : 0) : AkiraSelection::outfits(board.ram,vf1,fighter),
-		                    force_vf1_akira && fighter!=0 ? 0 : AkiraSelection::previews(selection,vf1,fighter),fighter);
+		                    force_vf1_akira && fighter!=0 ? 0 : AkiraSelection::previews(selection,vf1,fighter),fighter,expressions.poses());
 		    vf2_akira.apply(scene[newest], force_vf2_akira ? (fighter==0 ? 3 : 0) : AkiraSelection::outfits(board.ram,vf2,fighter),
-		                    force_vf2_akira && fighter!=0 ? 0 : AkiraSelection::previews(selection,vf2,fighter),fighter);
+		                    force_vf2_akira && fighter!=0 ? 0 : AkiraSelection::previews(selection,vf2,fighter),fighter,expressions.poses());
 		}
 		const std::array<unsigned,2> next_fighters={selection[0].fighter,selection[1].fighter};
 		have_prev = frame > 1 && appearance_mask == next_mask && vf2_appearance_mask == next_vf2_mask && appearance_fighters==next_fighters;

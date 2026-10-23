@@ -66,6 +66,27 @@ int main(int argc,char **argv)
                 "cache reload changed geometry or portrait");
         require(!vf1.load("/not/a/companion.zip",error),"missing replacement ROM accepted");
         require(vf1.ready(1) && vf1.portrait(1).pixels==portrait,"failed ROM reload discarded working cache");
+        // Inactive P2 can retain Akira's hurt state while P1 chooses Akira.
+        // Exercise the complete RAM -> tracker -> cache adapter path: the
+        // stale slot must not replace P1's neutral face with closed eyes.
+        std::vector<uint8_t> ram(0x200000);
+        const auto word=[&](size_t at,uint32_t value){std::memcpy(ram.data()+at,&value,4);};
+        word(0x108000,5);word(0x10a7c8,0x0a0006c6);
+        fighter_expression::Tracker expressions;
+        for(unsigned tick=0;tick<200;++tick)expressions.update(fighter_expression::snapshot(ram));
+        video::Scene hover;hover.viewports={preview(0,0,20)};
+        for(unsigned segment=0;segment<3;++segment) {
+            video::Model ribbon;ribbon.source_node=0x512b0+segment*8;
+            ribbon.matrix_index=uint16_t(104+segment*2);ribbon.matrix=video::Mat4::identity();
+            ribbon.meshes=std::make_shared<std::vector<video::Mesh>>();
+            hover.viewports[0].models.push_back(std::move(ribbon));
+        }
+        auto neutral_hover=hover;
+        require(vf2.apply(neutral_hover,0,1,0)==1 &&
+                vf2.apply(hover,0,1,0,expressions.poses())==1,"Akira hover preview missing");
+        require(geometry_hash(hover.viewports[0].models[0].meshes)==
+                geometry_hash(neutral_hover.viewports[0].models[0].meshes),
+                "inactive player's hurt expression changed the active preview");
         // Mirror match: each player chooses a different source edition of Pai.
         AkiraSelection selection;AkiraSelection::Snapshot state{};m3::Controls input;
         const unsigned id=fighter_roster::game_ids[1];

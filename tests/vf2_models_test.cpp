@@ -21,6 +21,12 @@ bool equal_mesh(const vf1_models::Mesh &a,const vf1_models::Mesh &b)
 }
 bool equal(const vf1_models::Assets &a, const vf1_models::Assets &b)
 {
+    if(a.face_frame_count!=b.face_frame_count || a.face_states!=b.face_states || a.face_speech!=b.face_speech ||
+       a.face_frames.size()!=b.face_frames.size() || bool(a.decode_face)!=bool(b.decode_face))return false;
+    for(size_t i=0;i<a.face_frames.size();++i)if(!equal_mesh(a.face_frames[i],b.face_frames[i]))return false;
+    for(size_t i=0;i<a.face_animations.size();++i)
+        if(a.face_animations[i].frames!=b.face_animations[i].frames ||
+           a.face_animations[i].loop_start!=b.face_animations[i].loop_start)return false;
     if(a.source_joints!=b.source_joints)return false;
     if(a.portrait.width!=b.portrait.width || a.portrait.height!=b.portrait.height ||
        a.portrait.pixels!=b.portrait.pixels)return false;
@@ -106,12 +112,49 @@ int main(int argc, char **argv)
         constexpr unsigned head_chains[]={2,2,1,1,6,2,3,15,2,3};
         constexpr unsigned body_chains[]={2,0,0,0,0,2,0,0,1,4};
         std::set<std::vector<uint32_t>> portraits;
+        unsigned expression_frames=0;
         for(unsigned fighter=0;fighter<10;++fighter) {
             vf1_models::Assets roster;
             require(vf2_models::load(argv[1],roster,error,fighter),std::string(names[fighter])+": "+error);
             require(roster.portrait.available() && roster.portrait.width==48 && roster.portrait.height==88,
                     std::string(names[fighter])+": missing original select portrait");
             require(portraits.insert(roster.portrait.pixels).second,"fighter reused another portrait");
+            require(roster.decode_face && roster.face_frame_count>=3 && roster.face_frame_count<=2048,
+                    "missing bounded native facial expression bank");
+            require(roster.face_frames.size()==1 && equal_mesh(roster.face_frames[0],roster.parts.back()),
+                    "native neutral head changed or expression bank was eagerly expanded");
+            require(equal_mesh(roster.decode_face(0),roster.parts.back()),"compact face recipe changed neutral head");
+            for(unsigned state:roster.face_states)require(state<roster.face_frame_count,"invalid native face alias");
+            require(roster.face_speech.size()==17 && roster.face_speech.front()==0,
+                    "missing neutral-to-open source speech lookup");
+            for(unsigned frame:roster.face_speech)require(frame<roster.face_frame_count,"speech escaped native bank");
+            for(const auto &animation:roster.face_animations) {
+                require(animation.frames.size()<=4096,"unbounded native face timeline");
+                require(animation.loop_start<0 || unsigned(animation.loop_start)<animation.frames.size(),
+                        "invalid native face loop target");
+                for(unsigned frame:animation.frames)require(frame<roster.face_frame_count,"face timeline escaped bank");
+            }
+            require(roster.face_animations[3].loop_start>=0,"native repeating facial script was flattened");
+            require(roster.face_animations[8].frames.size()==6 && roster.face_animations[9].frames.size()==15,
+                    "native closing/opening timing was lost");
+            require(roster.face_animations[9].frames.front()!=roster.face_animations[9].frames.back(),
+                    "recovery script started from neutral instead of closed phase");
+            bool changed=false;
+            for(unsigned frame=0;frame<roster.face_frame_count;++frame) {
+                const auto mesh=roster.decode_face(frame);++expression_frames;
+                require(!mesh.empty() && mesh.size()<=100000,"invalid lazy native face geometry");
+                changed|=!equal_mesh(mesh,roster.parts.back());
+                for(const auto &triangle:mesh) {
+                    require((triangle.colour>>24)==255,"invalid animated face colour");
+                    for(const auto &point:triangle.points)for(float v:point)
+                        require(std::isfinite(v),"invalid animated face coordinate");
+                }
+            }
+            require(changed,"native expression frames collapsed to neutral");
+            require(equal_mesh(roster.decode_face(0),roster.parts.back()),"lazy decoding mutated shared atlas");
+            bool rejected=false;
+            try {roster.decode_face(roster.face_frame_count);}catch(const std::out_of_range &){rejected=true;}
+            require(rejected,"out-of-range face recipe accepted");
             for(const auto &part:roster.parts) {
                 require(!part.empty(),std::string(names[fighter])+": missing body part");
                 for(const auto &t:part) {
@@ -191,6 +234,7 @@ int main(int argc, char **argv)
                 "repeat load differs or retains error");
         std::cout << models.parts.size() << " unscaled Akira parts, " << total
                   << " triangles preserved; all 10 VF2 fighters, 640 native hand poses, portraits, skeletons and accessories; "
+                  << expression_frames << " lazy native facial frames; "
                   << "missing, malformed, CRC damage, invalid fighter and transactional reload checks passed.\n";
         return 0;
     } catch (const std::exception &e) {

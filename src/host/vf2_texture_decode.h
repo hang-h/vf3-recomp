@@ -122,6 +122,19 @@ class TextureDecoder {
     }
 public:
     explicit TextureDecoder(const std::vector<std::uint8_t>& data) : rom(data) {}
+    // Native 0x4b7b0/0x4b7e8 queue one compressed mouth or eye frame.
+    // Frame-storage placements alternate sheets; the live face always lands
+    // at the first P1 face rectangle (mouth x128, eyes x0, both y768).
+    void facePatch(std::vector<std::uint16_t>& sheet,unsigned group,unsigned frame,bool mouth) const {
+        if(sheet.size()!=0x80000 || group<41 || group>82)bad();
+        const auto groups=word(0x0230000c),sources=word(groups+group*4);
+        const auto placements=word(word(0x02300008)+word(sources)*4);
+        const auto count=word(placements);
+        if(!count || count>33 || frame>=count)bad();
+        const auto start=word(sources+4+frame*4);
+        const auto end=frame+1<count ? word(sources+8+frame*4) : word(groups+(group+1)*4);
+        decode(start,end,mouth?0x00800006u:0x00000006u,sheet);
+    }
     // Physical sheet: 1024 x 2048 texels, packed into 2x2 blocks. Each fighter's
     // three raw and nine compressed base textures use sheet 1. No game startup,
     // emulated machine, extracted texture file, or precomputed ROM data needed.

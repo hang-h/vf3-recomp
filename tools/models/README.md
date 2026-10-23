@@ -22,7 +22,14 @@ VF3 still supplies the skeleton, moves, collision and shadows. Each source has
 Akira headband ribbons use the source geometry and follow VF3 tail directions; VF2's
 two five-segment ribbons are fitted to VF3's three cloth bones. VF1 belt tails
 follow the pelvis; VF2's two two-segment belt tails follow the torso, without
-separate cloth physics. Faces use neutral source poses, without VF3 expressions.
+separate cloth physics. Faces now use original source expression frames: selection,
+hit reactions, recovery and results follow native VF3 actor state. High-detail
+speech follows VF3's actual jaw morph and blend, retargeted to the source mouth
+opening. This preserves the original facial assets but is an aperture approximation,
+not a phoneme-for-phoneme transplant of the different facial rigs. Source eyes and
+brows move with their original expression scripts; independent VF3 eye/brow morphs
+are not transplanted. VF1 Kage retains the original concealed mask policy; VF2 Kage
+can animate his visible eyes while keeping the mask.
 Other fighters currently use rigid source hair/accessory chains, without their
 original cloth physics. VF2 Jacky's tufts use the upward rest direction indicated
 by their native accessory force, rather than the hanging-braid fallback. Both VF3 outfits use the source game's P1 geometry and palette.
@@ -115,8 +122,9 @@ No test ROM or image is committed.
   Kage's opaque palette-92 mask comes after both skin and mouth, so it receives
   three offset layers even where its triangulation differs. This removes skin
   and mouth showing through the mask without altering limbs or VF1 geometry.
-  The imported VF2 head still uses its neutral expression; the game's changing
-  expression aliases are not yet mapped to VF3 facial animation.
+  Animated source expression aliases, eye/mouth texture uploads and jaw geometry
+  are now decoded alongside the exact neutral head; see the expression evidence
+  below for native script mapping and the separate speech retargeting lookup.
   Fine texture edges are therefore approximate. Colours use ROM luma/colour
   curves with a fixed native first-fight palette environment (offset 64, slope
   37, gain 128 and special-curve LUT offset -52), followed by VF3 lighting;
@@ -282,3 +290,179 @@ Selection overlay / VF2 waist follow-up: source-only VF1/VF2 previews were
 checked for both outfits, including explicit animated-face removal and head
 shadow preservation. Local screenshots and logs are under `build/akira-face-fix`;
 waist fitting comparisons are retained under `build/vf2-akira/waist-fit-evidence.json`.
+
+## Native facial-expression evidence
+
+VF1's character record `+0x72` points to nine head-component lists: four fixed
+pieces, separate left/right eye and brow lists, and the mouth. V60 `0xff06ac`
+reads seven scripts from head-data `+0x24`: a duration byte, component-indexed
+frame sequences, and an `ff` terminator. All eight fighters have seven 16-frame
+scripts. The decoder preserves those sequences, including asymmetric eyes and
+the different recovery pacing of Pai/Sarah, and deduplicates full heads by
+their source descriptors. Frame zero is exactly the previous neutral head.
+
+The native damage entry at `0xfeb65e` starts script 3. Native action-script
+opcode `f8` (`0xfedd97`) selects script 1 for Pai's winning action `0x12e`, and
+script 5 for Sarah's `0x15d`/`0x15e` and Jacky's `0x12b` winning actions.
+The original victory move table (`0xfe30af..0xfe30d6`) confirms ordinary
+victory scripts `[1,1,5,5,1,5,5,5]` in shared-roster order; alternate source
+victories all use 5. The adapter uses the ordinary choice as its result fallback;
+VF3's active speech controller takes priority. The bounded source parser and
+all 16 command traces are in `victory-scripts.{py,json,txt}`.
+Scripts 2/4/6 are return transitions; `0xfeacfd` advances an odd script ID to
+its matching even ID. Script 7 is the character-selection expression, played
+once and held by `0xfce81a..0xfce897`. These IDs are not universal emotion
+labels: script 1 smiles while script 5 opens the mouth/shouts. No independent
+VF1 looping blink timer has been established; the closed-eye source geometry
+is available separately. Native masked Kage forces head components 1..8 to
+frame zero (`0xff070b..0xff073f`), so his mask and visible eyes remain static.
+
+VF3 revision D's actors are at `0x108780 + player*0x2000`. Native fields are
+HP `+0x56` (16-bit), pending/current action `+0x44`/`+0x48` (32-bit), motion ID
+`+0x4c`, and motion frame `+0x4e` (16-bit). PPC `0x10474..0x104bc` subtracts
+damage, clamps HP at zero and sets actor flag `0x04000000` on KO. Runtime HP
+changes confirm action categories `0x0a` and `0x0e` as hit reactions. Category
+`0x0b` also covers recovery and cannot be treated as damage generally; category
+zero plays a supplied motion ID and includes both attacks and victory poses.
+
+The round resolver stores winner/loser actor pointers at `0x1061c4`/`0x1061c8`
+(`0x29bdc`/`0x29be0`). Actual victory poses require native main phase
+`read8(0x102008)==7` and subphase `read8(0x10200b)` equal to `0x0e` or `0x0f`;
+`0x0d` is the finishing-move replay. The sampler also checks that the pointers
+are the two distinct actor bases. Result pointers remain populated after the
+pose, so pointer identity alone is insufficient. Some inactive actors retain
+motion frame 1 throughout the result scene: body-frame progression alone does
+not prove that a separate facial controller has advanced. RAM byte/halfword
+reads use the emulator's `address^3` / `address^2` storage convention.
+
+Local, ignored evidence is under `build/vf1-expressions`: native V60/PPC
+disassembly, decoded script metadata in `source.json`, native event logs,
+`vf3-defeat-globals.csv`, and `atlas/sheet-{0,1}.png` showing all eight VF1
+heads at neutral/closed/script endpoints. Decoder tests cover all native
+timelines, neutral preservation, source-mask policy, recovery deduplication,
+CRC rejection and transactional reload; normal and ASan/UBSan runs passed.
+The source banks preserve original geometry/timing. Cross-game action-to-face
+selection is a separate retargeting policy, not evidence that VF1 and VF3
+share animation IDs or controller formats.
+
+VF2 2.1 uses ten linked facial scripts through Main-data `0x6278`; i960
+`0x4b604..0x4b7ac` loads and advances their 20-byte nodes. Each node stores
+its frame duration, independent mouth/eye target phases (0..1000), sequence
+pointers and a next-node pointer. The decoder reproduces integer interpolation,
+source jaw descriptor selection and native texture-frame pairing. Script 3
+retains its lead-in and actual next-node loop; scripts 8/9 retain the native
+6-frame closing and 15-frame reopening transitions. Source script IDs are
+preserved rather than being assigned universal emotion names.
+
+The source Huffman streams provide live mouth patches at `(128,768)` and eye
+patches at `(0,768)` in texture sheet 1. Native Lion frame 1500 matches all
+3,072 packed blocks in those regions using mouth group 81/frame 4 and eye
+group 82/frame 6; the corresponding decoded head matches all 30,460 triangles
+of bank frame 35. This includes the native colours, cutout contours and
+coplanar painter-order corrections used by the neutral heads.
+
+Across the ten fighters the native scripts produce 580 distinct descriptor /
+mouth / eye recipes. Independent static, mouth and eye components are shared
+between jaw aliases and compressed in memory after loading. No generated ROM
+asset or disk cache is required, and no emulator, ROM file handle, atlas or
+mutable decoder is retained by the frame callback. On the local development
+Mac the compressed bank uses 1.75–6.87 MB per fighter; source loading takes
+140–327 ms and frame assembly 0.62–2.01 ms. These are desktop measurements,
+not an iOS performance guarantee. All 580 output hashes match the original
+full-head decoder exactly; Akira's existing 53,748 body triangles remain
+unchanged. All-roster decoding, every expression frame, native loops/recovery,
+invalid indices and transactional failures pass normally and under ASan/UBSan.
+
+Ignored evidence is in `build/vf2-expressions`: `face-controller-dis.txt`,
+`face-callers.txt`, `patch-check.cpp`, `recipe-check.cpp`, `metrics-compiled.json`,
+`memory-compiled.txt`, the before/compiled hash lists, and
+`metrics-final.json`, `memory-final.txt`, and `atlas/roster-sheet-{0,1,2}.png`. The atlas displays source scripts 1/3/7/8
+across all ten characters, including VF2 Kage's animated eyes above his mask.
+
+A native Lion run with a controlled opponent KO at frame 1700 confirms the
+source event mapping: selection confirmation at frame 1374 (mode 7/subphase 5)
+starts script 7; damage at frame 1697 (HP 146, fight mode 9/subphase 9) starts
+script 8. The winning pose at frame 1952 (mode 9/subphase 17) starts script 3
+and follows its linked nodes, then motion 25 at frame 2012 selects recovery
+script 2. Script 9 reopens the eyes during subphase 16. The exact node writes
+are recorded in `native-events.log`; a face texture match alone does not prove
+which game event triggered it, because uploaded patches can outlive a script.
+
+The speech aperture lookup is deliberately separate from those native scripts.
+It exposes 17 normalized opening samples with neutral eyes, using original
+mouth textures and associated jaw descriptors. Script 1 is not uniformly
+monotonic: Akira opens twice, while Wolf/Jeffry/Kage/Shun open then close.
+The verified opening passes are Akira neutral then frames 10..19, Jeffry
+neutral then 13..19, Wolf 0..9, Kage/Shun 0..5, and the full sequence for the
+others. `mouth-patches.png` shows every original mouth frame. This adds 89
+neutral-eye combinations (669 total recipes) without adding compressed pieces;
+it is cross-game aperture retargeting, not a replacement for the native timing.
+
+All ten controlled native winning-pose runs also confirm fighter-specific
+source script choices: Akira/Lau/Wolf/Sarah use 1, Pai/Jeffry/Kage/Jacky/Lion
+use 3, and Shun uses the aliased 4/5/6 script. Selection confirmation uses 7
+throughout the roster; observed damage uses 8 followed by reopening 9.
+`native-event-evidence.json` records the exact frame, mode, subphase, HP and
+source-node writes for each fighter. These observed source choices guide the
+cross-game adapter without claiming equivalent motion IDs between games.
+
+
+The VF3 sampler also follows the native type-`0x1c` speech controller
+(`0x43f40`, script advancement `0x43e0c`). A bounded object-pool scan requires
+an exact actor owner, costume ID, resource ID, valid script-table entry and
+active speech bit, and rejects duplicate matches. Seven native morph targets
+are measured by lower-lip displacement for each fighter; their IDs are not a
+linear mouth-opening scale. The source aperture follows the previous/target
+morph and the native interpolation fraction. Actor motion frame 1 remaining
+frozen in a result pose therefore does not freeze the mouth. This is a visual
+jaw-opening approximation; independent native eye/brow morphs and phoneme
+identity are not claimed. The high-detail speech path is absent for masked
+Kage, matching the native controller guard.
+
+`fighter_expression_pose.h` handles per-player timing, confirmation, hit and
+result transitions on every game frame, including frames without rendering.
+Hovering selection previews remain neutral. Ordinary hit and victory recovery
+uses the source reverse/reopen sequence. The renderer caches four converted
+heads per loaded fighter, gives each frame a distinct mesh identity, and keeps
+published scenes valid after eviction. It never writes game RAM.
+
+Inactive selection slots are excluded from facial ownership: their actor RAM
+can retain the same fighter and a stale hit state, which otherwise overwrites
+the active preview with closed eyes. Phase-zero CPU actors remain valid during
+battle. Entering a hover preview also discards battle recovery expressions.
+
+Run the expression regressions with local companions:
+
+```sh
+make -j4 build/bin/fighter-expression-test build/bin/fighter-expressions-test build/bin/fighter-expression-check
+build/bin/fighter-expression-test
+build/bin/fighter-expressions-test /path/to/vf.zip /path/to/vf2.zip
+build/bin/fighter-expression-check /path/to/vf3.zip /path/to/vf.zip /path/to/vf2.zip build/expression-check all 6500
+```
+
+The native sampler tests cover stale winner pointers, replay/new-round guards,
+frozen result motion, actor changes, independent player states, voice ownership,
+non-ordinal morph blending and duplicate-controller rejection. Renderer tests
+compare actual geometry, keep the other outfit neutral, and retain old scenes
+across facial-cache eviction and source-asset destruction. Local native speech
+analysis is retained in `build/fighter-expression/evidence.json`, including REA
+evidence IDs `ev_35753227913a1125be3bd078d8f98ac85ea8dbdc6a4d54de411e4534dfa5cc24`
+and `ev_690b66c925cda718783d04e0d227126b82e66ebe436107eea7b79189f9c38a99`.
+
+Local integration validation covers 65,000 native VF3 frames across all ten
+fighters, 18 available source/fighter combinations and 2,748 visible-scene
+checks. These runs use normal gameplay without forced KO and verify facial
+changes against the same scene with neutral heads, independent outfits,
+original-face removal, unchanged transforms/shadows and unchanged game RAM.
+VF1 Kage correctly remains static; VF2 Kage animates his eyes. P2 Lau's result
+close-up verifies native speech ownership independently of P1. After the final
+hover-recovery guard, an additional 6,500-frame Akira run passes. Results and
+screenshots remain ignored under `build/fighter-expression`.
+
+macOS Metal and the iOS simulator were run with mixed VF1/VF2 fighters; final
+selection captures on both show neutral open eyes after the inactive-player
+fix. macOS, iOS simulator and unsigned iOS device builds compile and link with
+the recorded Xcode toolchain commands. No physical-device run was performed
+for this change. Source-decoder ASan/UBSan checks and the RAM-to-renderer hover
+ownership regression also pass. ROMs and decoded assets remain external and
+are not committed or bundled.

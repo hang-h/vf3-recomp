@@ -74,6 +74,10 @@ $(BIN)/roster-check: $(call objs,$(CORE) src/host/vf1_models.cpp src/host/vf2_mo
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
+$(BIN)/fighter-expression-check: $(call objs,$(CORE) src/host/vf1_models.cpp src/host/vf2_models.cpp src/video/vf1_akira.cpp tools/models/fighter-expression-check.cpp) $(SLJIT_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+
 $(BIN)/akira-selection-check: $(call objs,$(CORE) src/host/vf1_models.cpp src/host/vf2_models.cpp src/video/vf1_akira.cpp src/video/vf2_akira.cpp tools/models/akira-selection-check.cpp) $(SLJIT_OBJ)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
@@ -86,6 +90,10 @@ $(BIN)/akira-selection-test: $(call objs,tests/akira_selection_test.cpp)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@
 
+$(BIN)/fighter-expression-test: $(call objs,tests/fighter_expression_test.cpp)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@
+
 $(BIN)/vf2-models-test: $(call objs,src/host/vf2_models.cpp tests/vf2_models_test.cpp)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
@@ -95,6 +103,10 @@ $(BIN)/vf1-models-test: $(call objs,src/host/vf1_models.cpp tests/vf1_models_tes
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
 $(BIN)/fighter-appearances-test: $(call objs,$(CORE) src/host/vf1_models.cpp src/host/vf2_models.cpp src/video/vf1_akira.cpp tests/fighter_appearances_test.cpp) $(SLJIT_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+
+$(BIN)/fighter-expressions-test: $(call objs,$(CORE) src/host/vf1_models.cpp src/host/vf2_models.cpp src/video/vf1_akira.cpp tests/fighter_expressions_test.cpp) $(SLJIT_OBJ)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 

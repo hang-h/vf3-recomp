@@ -196,13 +196,95 @@ bool Vf1Akira::load_assets(const vf1_models::Assets &assets, AkiraSource source,
     model2_source=model2;
     source_portrait=assets.portrait;
     roster_fighter=0;
+    load_faces(assets);
     error.clear();return true;
 }
 
-size_t Vf1Akira::apply(Scene &scene, unsigned outfit_mask, unsigned preview_mask) const
+void Vf1Akira::load_faces(const vf1_models::Assets &assets)
+{
+    source_faces=assets.face_frames;
+    face_frame_count=std::max(unsigned(source_faces.size()),assets.face_frame_count);
+    decode_face=assets.decode_face;
+    face_animations=assets.face_animations;
+    face_states=assets.face_states;
+    face_speech=assets.face_speech;
+    face_cache={};face_clock=0;
+}
+
+uint16_t Vf1Akira::face_animation_frame(unsigned animation,unsigned step) const
+{
+    if(animation>=face_animations.size())return 0;
+    const auto &timeline=face_animations[animation];
+    const auto &frames=timeline.frames;
+    if(frames.empty())return 0;
+    if(step>=frames.size() && timeline.loop_start>=0 && size_t(timeline.loop_start)<frames.size())
+        step=unsigned(timeline.loop_start+(step-timeline.loop_start)%(frames.size()-timeline.loop_start));
+    return frames[std::min(size_t(step),frames.size()-1)];
+}
+
+uint16_t Vf1Akira::face_state_frame(unsigned state) const
+{
+    return state<face_states.size() ? face_states[state] : 0;
+}
+
+uint16_t Vf1Akira::expression_frame(const fighter_expression::Pose &pose) const
+{
+    if(!pose.valid)return 0;
+    using Kind=fighter_expression::Kind;
+    if(pose.speaking && std::isfinite(pose.mouth_open)) {
+        const float open=std::clamp(pose.mouth_open,0.f,1.f);
+        if(open<.02f)return 0;
+        if(model2_source && !face_speech.empty())
+            return face_speech[size_t(std::lround(open*(face_speech.size()-1)))];
+        if(!model2_source)return face_animation_frame(5,unsigned(std::lround(open*15)));
+    }
+    // Source script IDs are game-specific. These are visual retargeting
+    // choices, not an assumption that the two games share animation numbers.
+    unsigned animation=0;
+    switch(pose.kind) {
+    case Kind::Selection: animation=7;break;
+    case Kind::Hurt: case Kind::Defeat: animation=model2_source?8:3;break;
+    case Kind::Victory: {
+        constexpr unsigned vf1_victory[]={1,1,5,5,1,5,5,5};
+        constexpr unsigned vf2_victory[]={1,3,1,1,3,3,1,3,6,3};
+        animation=model2_source?vf2_victory[roster_fighter]:vf1_victory[roster_fighter];break;
+    }
+    case Kind::HurtRecovery: animation=model2_source?9:4;break;
+    case Kind::VictoryRecovery: animation=model2_source?2:(roster_fighter==0 || roster_fighter==1 || roster_fighter==4)?2:6;break;
+    case Kind::Neutral: return 0;
+    }
+    return face_animation_frame(animation,pose.tick);
+}
+
+Meshes Vf1Akira::face_meshes(uint16_t frame) const
+{
+    if(!frame || frame>=face_frame_count)return parts[size_t(Part::Head)];
+    for(auto &entry:face_cache)if(entry.meshes && entry.frame==frame) {
+        entry.used=++face_clock;return entry.meshes;
+    }
+    // Each expression has a separate topology identity. Retained scenes own
+    // their meshes even after this small conversion cache evicts a frame.
+    const uint64_t key=0x5800000000000000ull | (uint64_t(model2_source?2:1)<<52) |
+        (uint64_t(roster_fighter)<<48);
+    const Binding binding={Part(frame),0,0,unit_scale,unit_scale,head_z_scale,head_z_offset,0};
+    vf1_models::Mesh decoded;
+    const vf1_models::Mesh *geometry=frame<source_faces.size() ? &source_faces[frame] : nullptr;
+    if(!geometry || geometry->empty()) {
+        if(!decode_face)return parts[size_t(Part::Head)];
+        try {decoded=decode_face(frame);} catch(const std::exception &) {return parts[size_t(Part::Head)];}
+        if(decoded.empty())return parts[size_t(Part::Head)];
+        geometry=&decoded;
+    }
+    auto &entry=*std::min_element(face_cache.begin(),face_cache.end(),[](const auto &a,const auto &b){return a.used<b.used;});
+    entry={frame,++face_clock,convert(*geometry,binding,key)};
+    return entry.meshes;
+}
+
+size_t Vf1Akira::apply(Scene &scene, unsigned outfit_mask, unsigned preview_mask,
+                      const std::array<uint16_t,2> &face_frames) const
 {
     if (!enabled || !ready() || !((outfit_mask|preview_mask) & 3)) return 0;
-    if(roster_fighter) return apply_fighter(scene,outfit_mask,preview_mask);
+    if(roster_fighter) return apply_fighter(scene,outfit_mask,preview_mask,face_frames);
     static const Meshes empty = std::make_shared<std::vector<Mesh>>();
     size_t replaced=0;
     // Some stages split each fighter across a dozen lighting viewports. Keep
@@ -292,7 +374,7 @@ size_t Vf1Akira::apply(Scene &scene, unsigned outfit_mask, unsigned preview_mask
             for(int k=0;k<3;++k)anchor[k]+=ribbon.lengths[segment]*unit_scale*(down[k]+splay*width[k]);
           }
         }
-        auto head_with_ribbon=std::make_shared<std::vector<Mesh>>(*parts[size_t(Part::Head)]);
+        auto head_with_ribbon=std::make_shared<std::vector<Mesh>>(*face_meshes(face_frames[outfit]));
         append(head_with_ribbon,ribbon_geometry,121,mesh_key_base);
         for (auto &vp : scene.viewports) if (same_camera(vp)) for (auto &m : vp.models) {
             const int slot=int(m.matrix_index)-base;
@@ -326,7 +408,7 @@ size_t Vf1Akira::apply(Scene &scene, unsigned outfit_mask, unsigned preview_mask
 bool Vf1Akira::load_fighter_assets(const vf1_models::Assets &assets,AkiraSource source,
                                  std::string &error,unsigned fighter)
 {
-    if(fighter>=fighter_layouts::fighters.size() ||
+    if(fighter>=fighter_layouts::fighters.size() || (source==AkiraSource::VF1 && fighter>=8) ||
        std::any_of(assets.parts.begin(),assets.parts.end(),[](const auto &p){return p.empty();})) {
         error="Missing fighter body parts";return false;
     }
@@ -394,10 +476,13 @@ bool Vf1Akira::load_fighter_assets(const vf1_models::Assets &assets,AkiraSource 
     }
     parts=std::move(next);hands=std::move(next_hands);ribbons=std::move(head_chains);
     replace_hands=has_hands;roster_fighter=fighter;model2_source=model2;mesh_key_base=key;
+    unit_scale=units;head_z_scale=-units;head_z_offset=0;
+    load_faces(assets);
     source_portrait=assets.portrait;error.clear();return true;
 }
 
-size_t Vf1Akira::apply_fighter(Scene &scene,unsigned outfit_mask,unsigned preview_mask) const
+size_t Vf1Akira::apply_fighter(Scene &scene,unsigned outfit_mask,unsigned preview_mask,
+                              const std::array<uint16_t,2> &face_frames) const
 {
     static const Meshes empty=std::make_shared<std::vector<Mesh>>();
     size_t replaced=0;
@@ -459,7 +544,7 @@ size_t Vf1Akira::apply_fighter(Scene &scene,unsigned outfit_mask,unsigned previe
             if(invalid)continue;
             Mat4 inverse_head;
             if(!inverse(head.matrix,inverse_head))continue;
-            auto with_hair=std::make_shared<std::vector<Mesh>>(*parts[size_t(Part::Head)]);
+            auto with_hair=std::make_shared<std::vector<Mesh>>(*face_meshes(face_frames[outfit]));
             vf1_models::Mesh hair;
             for(size_t chain_index=0;chain_index<ribbons.size();++chain_index) {
                 const auto &chain=ribbons[chain_index];

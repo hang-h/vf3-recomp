@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,11 @@ struct Portrait {
     std::vector<uint32_t> pixels; // opaque 0xAARRGGBB, native artwork dimensions
     bool available() const { return width && height && pixels.size() == size_t(width) * height; }
 };
+struct FaceAnimation {
+    // Native source timeline; entries address the eager/lazy facial frame bank.
+    std::vector<uint16_t> frames;
+    int loop_start=-1; // native next-node cycle; otherwise hold the final frame
+};
 struct Assets {
     // Original skeleton offsets (slots 0..15), used to fit each fighter's limbs.
     std::array<std::array<float,3>,16> source_joints{};
@@ -41,8 +47,18 @@ struct Assets {
     std::vector<Strand> extra_head_ribbons; // VF2 has a second, five-segment ribbon
     std::vector<Strand> extra_strands; // Other torso/pelvis accessories in the roster
     Portrait portrait;
+    // Immutable source head variants. Frame zero preserves the neutral head.
+    // Renderers convert only the currently displayed variants on demand.
+    std::vector<Mesh> face_frames;
+    // Texture-animated sources keep compact immutable recipes instead of
+    // baking every combination. The callback owns no emulator or file handle.
+    unsigned face_frame_count=0;
+    std::function<Mesh(unsigned)> decode_face;
+    std::array<FaceAnimation,10> face_animations; // original source script IDs (VF1: 1..7, VF2: 0..9)
+    std::array<uint16_t,3> face_states{}; // native neutral, expression, closed-eye heads
+    std::vector<uint16_t> face_speech; // original mouth sequence, closed to open
 };
 // Size/CRC-validated, no extracted files or cache; failure leaves out unchanged.
-// Only the original P1 Akira neutral face is decoded here, with no VF2 fitting.
+// Original P1 source geometry and facial frames, with no destination fitting.
 bool load(const std::string &zip, Assets &out, std::string &error, unsigned fighter=0);
 }

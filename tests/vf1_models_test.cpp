@@ -22,6 +22,13 @@ bool equal_mesh(const vf1_models::Mesh &a,const vf1_models::Mesh &b)
 bool equal(const vf1_models::Assets &a, const vf1_models::Assets &b)
 {
     if(a.source_joints!=b.source_joints)return false;
+    if(a.face_states!=b.face_states || a.face_speech!=b.face_speech || a.face_frames.size()!=b.face_frames.size() ||
+       a.face_frame_count!=b.face_frame_count || bool(a.decode_face)!=bool(b.decode_face))return false;
+    for(size_t frame=0;frame<a.face_frames.size();++frame)
+        if(!equal_mesh(a.face_frames[frame],b.face_frames[frame]))return false;
+    for(size_t animation=0;animation<a.face_animations.size();++animation)
+        if(a.face_animations[animation].frames!=b.face_animations[animation].frames ||
+           a.face_animations[animation].loop_start!=b.face_animations[animation].loop_start)return false;
     if(a.portrait.width!=b.portrait.width || a.portrait.height!=b.portrait.height ||
        a.portrait.pixels!=b.portrait.pixels)return false;
     for(size_t part=0;part<a.parts.size();++part)if(!equal_mesh(a.parts[part],b.parts[part]))return false;
@@ -29,7 +36,8 @@ bool equal(const vf1_models::Assets &a, const vf1_models::Assets &b)
         if(!equal_mesh(a.hands[side][pose],b.hands[side][pose]))return false;
     if(!equal_mesh(a.belt_knot,b.belt_knot))return false;
     const auto same_strand=[](const auto &x,const auto &y) {
-        if(x.bone!=y.bone || x.anchor!=y.anchor || x.lengths!=y.lengths || x.segments.size()!=y.segments.size())return false;
+        if(x.bone!=y.bone || x.anchor!=y.anchor || x.rest_direction!=y.rest_direction ||
+           x.lengths!=y.lengths || x.segments.size()!=y.segments.size())return false;
         for(size_t segment=0;segment<x.segments.size();++segment)
             if(!equal_mesh(x.segments[segment],y.segments[segment]))return false;
         return true;
@@ -38,6 +46,9 @@ bool equal(const vf1_models::Assets &a, const vf1_models::Assets &b)
     if(a.extra_head_ribbons.size()!=b.extra_head_ribbons.size())return false;
     for(size_t chain=0;chain<a.extra_head_ribbons.size();++chain)
         if(!same_strand(a.extra_head_ribbons[chain],b.extra_head_ribbons[chain]))return false;
+    if(a.extra_strands.size()!=b.extra_strands.size())return false;
+    for(size_t chain=0;chain<a.extra_strands.size();++chain)
+        if(!same_strand(a.extra_strands[chain],b.extra_strands[chain]))return false;
     return true;
 }
 struct temp_folder {
@@ -125,6 +136,47 @@ int main(int argc, char **argv)
         constexpr unsigned head_segments[]={3,5,8,3,1,5,6,0};
         for(unsigned fighter=first;fighter<last;++fighter) {
             require(vf1_models::load(argv[1],models,error,fighter),"fighter "+std::to_string(fighter)+": "+error);
+            require(!models.face_frames.empty() &&
+                    equal_mesh(models.face_frames[0],models.parts[size_t(vf1_models::Part::Head)]),
+                    "facial bank changed original neutral head");
+            require(models.face_animations[0].frames.empty(),"invented native VF1 blink timer");
+            require(models.face_speech.empty(),"invented native VF1 speech sequence");
+            for(unsigned animation=1;animation<=7;++animation) {
+                const auto &timeline=models.face_animations[animation].frames;
+                require(timeline.size()==16,"incomplete native facial timeline");
+                require(models.face_animations[animation].loop_start==-1,"VF1 terminal expression unexpectedly loops");
+                for(uint16_t frame:timeline)require(frame<models.face_frames.size(),"facial frame outside bank");
+            }
+            // Victory recovery reverses exactly. Pai/Sarah's damage recovery
+            // has different eye pacing, which must not be synthesized by
+            // reversing their forward script. Other fighters reverse exactly.
+            for(unsigned animation:{3u,5u}) {
+                if(animation==3 && (fighter==1 || fighter==6))continue;
+                for(unsigned frame=0;frame<16;++frame)
+                    require(models.face_animations[animation].frames[frame]==
+                            models.face_animations[animation+1].frames[15-frame],
+                            "native recovery no longer reverses its source expression");
+            }
+            for(uint16_t state:models.face_states)require(state<models.face_frames.size(),"invalid facial state");
+            for(const auto &face:models.face_frames) {
+                require(!face.empty(),"empty facial variant");
+                for(const auto &triangle:face) {
+                    require(triangle.colour>>24==255,"nonopaque facial colour");
+                    for(const auto &point:triangle.points)for(float coordinate:point)
+                        require(std::isfinite(coordinate),"nonfinite facial coordinate");
+                }
+            }
+            if(fighter==5) {
+                require(models.face_frames.size()==1,"masked Kage exposes concealed expressions");
+            } else {
+                require(models.face_frames.size()>16 && models.face_frames.size()<=114,"collapsed or unbounded facial bank");
+                require(!equal_mesh(models.face_frames[0],models.face_frames[models.face_states[2]]),
+                        "closed-eye geometry missing");
+                require(models.face_animations[3].frames.front()!=models.face_animations[3].frames.back(),
+                        "damage expression does not animate");
+                require(models.face_animations[5].frames.front()!=models.face_animations[5].frames.back(),
+                        "victory expression does not animate");
+            }
             for(const auto &part:models.parts) {
                 require(!part.empty(),"fighter has empty body part");
                 for(const auto &triangle:part) {
@@ -171,7 +223,8 @@ int main(int argc, char **argv)
                     "failed roster load changed destination");
             size_t count=0;for(const auto &part:models.parts)count+=part.size();
             std::cout<<"VF1 fighter "<<fighter<<": "<<count<<" body triangles, 64 hand poses, "
-                     <<head_chains[fighter]<<" head chains, native portrait and skeleton verified.\n";
+                     <<head_chains[fighter]<<" head chains, "<<models.face_frames.size()
+                     <<" facial variants / 7 native timelines, portrait and skeleton verified.\n";
         }
         std::cout << models.parts.size() << " unscaled Akira parts, " << total
                   << " triangles, 64 hand poses, knot and 3 strands; missing, malformed, CRC damage, and transactional reload checks passed.\n";

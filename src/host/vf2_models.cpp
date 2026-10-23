@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <memory>
+#include <set>
 #include <stdexcept>
 #include <utility>
 
@@ -32,12 +34,33 @@ constexpr Rom roms[] = {
     {"epr-18387.14",0x124a8453,CPU,0x40000,0x20000}, {"epr-18388.15",0x8d347980,CPU,0x40002,0x20000},
 };
 struct Decoder {
+    struct PreparedFace {
+        std::array<uint16_t,4> header{};
+        std::array<Point,3> points{};
+        std::array<UV,3> uv{};
+        unsigned limit=0;
+        bool detail=false;
+        Mesh fixed;
+    };
+    struct Fragment { size_t address; std::shared_ptr<const std::vector<uint8_t>> data; };
     std::array<std::vector<uint8_t>, RegionCount> regions;
+    std::array<std::vector<Fragment>, RegionCount> fragments;
     std::vector<uint16_t> sheet;
     unsigned head_descriptor = 0x19c;
     unsigned native_actor = 0;
     const uint8_t *bytes(int region, size_t address, size_t count) const {
         const auto &r=regions[region];
+        if(r.empty()) {
+            const auto &f=fragments[region];
+            auto it=std::upper_bound(f.begin(),f.end(),address,
+                [](size_t a,const Fragment &b){return a<b.address;});
+            if(it!=f.begin()) {
+                --it;const auto offset=address-it->address;
+                if(offset<=it->data->size() && count<=it->data->size()-offset)
+                    return it->data->data()+offset;
+            }
+            throw std::runtime_error("VF2 face address outside captured ROM");
+        }
         if(address>r.size() || count>r.size()-address) throw std::runtime_error("VF2 model address outside ROM");
         return r.data()+address;
     }
@@ -204,7 +227,7 @@ struct Decoder {
             }
         } else if(rgb>>24)triangle(out,rgb,a,b,c);
     }
-    Mesh part(unsigned descriptor,unsigned subdivision=2) const {
+    Mesh part(unsigned descriptor,unsigned subdivision=2,std::vector<PreparedFace> *prepared=nullptr) const {
         const size_t d=0xe0000+size_t(descriptor)*16;
         size_t tpa=word(Main,d+4), tha=word(Main,d+8);
         const uint32_t object=word(Main,d+12);
@@ -235,12 +258,12 @@ struct Decoder {
                 // by 0.41 destination units, leaving the strip itself intact.
                 const Point normal=vertex(at+4);
                 const unsigned palette=(h[3]>>6)&1023;
-                const bool detail=descriptor==head_descriptor && (h[0]&0x2000) &&
+                const bool detail=(prepared || descriptor==head_descriptor) && (h[0]&0x2000) &&
                                   (native_actor!=0 || palette==1 || palette==2);
                 const unsigned limit=detail && (palette==1 || palette==2) ? 5 : subdivision;
                 auto emit=[&](Point p,Point q,Point r,const UV &up,const UV &uq,const UV &ur) {
                     unsigned layer=0;
-                    if(native_actor!=0 && descriptor==head_descriptor) {
+                    if(native_actor!=0 && (prepared || descriptor==head_descriptor)) {
                         std::array<Point,3> key={p,q,r};std::sort(key.begin(),key.end());
                         layer=head_layers[key]++;
                     }
@@ -250,11 +273,23 @@ struct Decoder {
                     // Kage's opaque mask (palette 92) is emitted after the
                     // mouth and skin with some different triangulation. Its
                     // entire surface must remain above those two layers.
-                    if(native_actor==3 && descriptor==head_descriptor && palette==92)
+                    if(native_actor==3 && (prepared || descriptor==head_descriptor) && palette==92)
                         layer=std::max(layer,3u);
                     const float lift=.0002f*std::max(layer,unsigned(detail));
                     for(unsigned k=0;k<3;++k) {p[k]-=lift*normal[k];q[k]-=lift*normal[k];r[k]-=lift*normal[k];}
+                    const size_t begin=out.size();
                     face(out,h,p,q,r,up,uq,ur,0,limit,detail);
+                    if(prepared) {
+                        const unsigned x=(h[2]&63)*32,y=((h[2]>>6)&31)*32;
+                        const unsigned height=32u<<((h[0]>>3)&7);
+                        const bool dynamic=(h[0]&0x4000) && x<192 && y<832 && y+height>768;
+                        if(dynamic)prepared->push_back({h,{p,q,r},{up,uq,ur},limit,detail,{}});
+                        else {
+                            if(prepared->empty() || prepared->back().limit)prepared->push_back({});
+                            auto &fixed=prepared->back().fixed;
+                            fixed.insert(fixed.end(),out.begin()+begin,out.end());
+                        }
+                    }
                 };
                 emit(old1,old0,a,uv[0],uv[1],uv[2]);
                 if(type&1)emit(old1,a,b,uv[0],uv[2],uv[3]);
@@ -267,6 +302,233 @@ struct Decoder {
         return out;
     }
 };
+// i960 4b604..4b7ac: native linked face timelines. Each step independently
+// interpolates mouth/eye phases, selects a jaw descriptor and uploads two
+// Huffman-compressed texture patches. Keep only combinations the scripts use.
+void faces(const Decoder &source,vf1_models::Assets &out) {
+    using Key=std::array<unsigned,3>; // descriptor, mouth patch+1, eye patch+1
+    struct Patch {bool mouth;std::vector<uint16_t> blocks;};
+    struct Recipe {
+        Decoder decoder;std::vector<Key> keys;std::vector<Patch> patches;
+        std::map<unsigned,std::vector<Decoder::PreparedFace>> heads;
+    };
+    auto recipe=std::make_shared<Recipe>();
+    recipe->decoder.native_actor=source.native_actor;
+    recipe->decoder.sheet=source.sheet;
+    std::map<Key,unsigned> bank;
+    auto add=[&](Key key) {
+        auto [it,inserted]=bank.emplace(key,unsigned(recipe->keys.size()));
+        if(inserted)recipe->keys.push_back(key);
+        if(recipe->keys.size()>2048)throw std::runtime_error("oversized VF2 face bank");
+        return uint16_t(it->second);
+    };
+    add({source.head_descriptor,0,0});
+    std::map<std::array<unsigned,3>,unsigned> patch_ids;
+    const detail::TextureDecoder texture(source.regions[Main]);
+    auto patch=[&](unsigned group,unsigned frame,bool mouth) {
+        const std::array<unsigned,3> key={group,frame,unsigned(mouth)};
+        const auto found=patch_ids.find(key);
+        if(found!=patch_ids.end())return found->second;
+        if(recipe->patches.size()>=512)throw std::runtime_error("oversized VF2 face patch bank");
+        auto sheet=source.sheet;
+        texture.facePatch(sheet,group,frame,mouth);
+        Patch p{mouth,{}};
+        const unsigned x=mouth?64:0,width=mouth?32:64;
+        for(unsigned y=384;y<416;++y)
+            p.blocks.insert(p.blocks.end(),sheet.begin()+y*512+x,sheet.begin()+y*512+x+width);
+        recipe->patches.push_back(std::move(p));
+        const unsigned id=unsigned(recipe->patches.size());patch_ids.emplace(key,id);return id;
+    };
+    auto pointer=[&](uint32_t address) -> size_t {
+        if(address<0x02000000 || address>=0x03000000)
+            throw std::runtime_error("invalid VF2 face script pointer");
+        return address-0x02000000;
+    };
+    for(unsigned animation=0;animation<10;++animation) {
+        const size_t table=pointer(source.word(Main,0x6278+animation*4));
+        uint32_t node=source.word(Main,table+source.native_actor*4);
+        auto &timeline=out.face_animations[animation];
+        // Recovery scripts interpolate back from the fully active/closed state.
+        std::array<int,2> phase={animation==2 || animation==9?1000:0,animation==2 || animation==9?1000:0};
+        std::array<unsigned,2> patches{};
+        std::map<std::array<unsigned,5>,unsigned> visited;
+        for(unsigned nodes=0;node;++nodes) {
+            if(nodes>=256)throw std::runtime_error("oversized VF2 face script");
+            const std::array<unsigned,5> state={node,unsigned(phase[0]),unsigned(phase[1]),patches[0],patches[1]};
+            auto [it,inserted]=visited.emplace(state,unsigned(timeline.frames.size()));
+            if(!inserted) {timeline.loop_start=int(it->second);break;}
+            const size_t at=pointer(node);
+            const unsigned duration=source.half(Main,at);
+            if(duration>1000 || timeline.frames.size()+duration>4096)
+                throw std::runtime_error("oversized VF2 face timeline");
+            const std::array<int,2> target={source.half(Main,at+4),source.half(Main,at+6)};
+            if(target[0]>1000 || target[1]>1000)throw std::runtime_error("invalid VF2 face phase");
+            const size_t mouth=pointer(source.word(Main,at+8));
+            const unsigned count=source.half(Main,mouth+2),group=source.half(Main,mouth);
+            if(!count || count>33)throw std::runtime_error("invalid VF2 mouth sequence");
+            const size_t descriptors=pointer(source.word(Main,mouth+4));
+            for(unsigned tick=0;tick<duration;++tick) {
+                const int remaining=int(duration-tick-1);
+                for(unsigned side=0;side<2;++side)
+                    phase[side]=remaining?phase[side]+(target[side]-phase[side])/remaining:target[side];
+                const unsigned frame=unsigned(phase[0])*count/1001;
+                const unsigned index=*source.bytes(Main,mouth+8+frame,1);
+                const unsigned descriptor=source.word(Main,descriptors+index*16);
+                if(group!=0xffff) {
+                    patches[0]=patch(group,frame,true);
+                    const size_t eyes=pointer(source.word(Main,at+12));
+                    const unsigned eye_count=source.half(Main,eyes+2);
+                    if(!eye_count || eye_count>33)throw std::runtime_error("invalid VF2 eye sequence");
+                    patches[1]=patch(source.half(Main,eyes),unsigned(phase[1])*eye_count/1001,false);
+                }
+                timeline.frames.push_back(add({descriptor,patches[0],patches[1]}));
+            }
+            node=source.word(Main,at+16);
+        }
+    }
+    // Script 8 traverses the original neutral/action/closed aliases. Decode
+    // these against the initial atlas, separately from any animated uploads.
+    const size_t table=pointer(source.word(Main,0x6278+8*4));
+    const size_t node=pointer(source.word(Main,table+source.native_actor*4));
+    const size_t sequence=pointer(source.word(Main,node+8));
+    const size_t aliases=pointer(source.word(Main,sequence+4));
+    for(unsigned state=0;state<3;++state) {
+        const unsigned index=*source.bytes(Main,sequence+8+state,1);
+        out.face_states[state]=add({source.word(Main,aliases+index*16),0,0});
+    }
+    // A cross-game aperture lookup, separate from the untouched native scripts.
+    // Script 1 includes closing passes (and Akira opens twice), so its phase is
+    // not a linear jaw opening. Use the original final opening pass, verified
+    // against each 64x64 mouth atlas; keep neutral eyes and exact source jaws.
+    const size_t speech_table=pointer(source.word(Main,0x6278+4));
+    const size_t speech_node=pointer(source.word(Main,speech_table+source.native_actor*4));
+    const size_t speech=pointer(source.word(Main,speech_node+8));
+    const unsigned speech_count=source.half(Main,speech+2),speech_group=source.half(Main,speech);
+    const size_t speech_descriptors=pointer(source.word(Main,speech+4));
+    unsigned first=0,last=speech_count-1;
+    if(source.native_actor==0)first=10;
+    if(source.native_actor==5)first=13,last=19;
+    if(source.native_actor==7)last=9;
+    if(source.native_actor==3 || source.native_actor==8)last=5;
+    if(last>=speech_count || first>last)throw std::runtime_error("invalid VF2 speech opening pass");
+    out.face_speech.push_back(0);
+    for(unsigned step=1;step<=16;++step) {
+        const unsigned frame=first+(step*(last-first)+8)/16;
+        const unsigned index=*source.bytes(Main,speech+8+frame,1);
+        out.face_speech.push_back(add({source.word(Main,speech_descriptors+index*16),
+                                     patch(speech_group,frame,true),0}));
+    }
+    // Prepare exact painter-order geometry once per native jaw/UV alias.
+    std::set<unsigned> descriptors;
+    for(const auto &key:recipe->keys)descriptors.insert(key[0]);
+    for(unsigned descriptor:descriptors)source.part(descriptor,3,&recipe->heads[descriptor]);
+    // Baking needs only colour curves and luminance tables after preparation.
+    // The final callback retains neither these ROM slices nor the atlas.
+    for(const auto &[region,begin,end]:std::array<std::array<size_t,3>,2>{{
+        {Main,0x100000,0x108000},{CPU,0x78d10,0x79510}}}) {
+        const auto *data=source.bytes(int(region),begin,end-begin);
+        recipe->decoder.fragments[region].push_back({begin,
+            std::make_shared<const std::vector<uint8_t>>(data,data+end-begin)});
+    }
+    // Factor the native head into consecutive static, mouth and eye pieces.
+    // Identical geometry is shared between jaw aliases, and each independent
+    // patch is baked only once. Compress runtime meshes so frame changes need
+    // bounded decompression instead of recursive cutout triangulation.
+    struct Packed {unsigned count;std::vector<uint8_t> data;};
+    struct Bank {std::vector<Packed> pieces;std::vector<std::vector<unsigned>> frames;};
+    struct Group {unsigned side=0;std::vector<Decoder::PreparedFace> faces;};
+    auto compiled=std::make_shared<Bank>();
+    std::vector<Group> groups;
+    std::map<std::vector<uint8_t>,unsigned> group_ids;
+    std::map<unsigned,std::vector<unsigned>> head_groups;
+    auto intern=[&](Group group) {
+        std::vector<uint8_t> bytes;
+        auto append=[&](const auto &value) {
+            const auto *p=reinterpret_cast<const uint8_t*>(&value);
+            bytes.insert(bytes.end(),p,p+sizeof(value));
+        };
+        append(group.side);
+        for(const auto &face:group.faces) {
+            if(group.side) {
+                append(face.header);append(face.points);append(face.uv);append(face.limit);append(face.detail);
+            } else for(const auto &triangle:face.fixed) {
+                append(triangle.colour);append(triangle.points);
+            }
+        }
+        auto [it,inserted]=group_ids.emplace(std::move(bytes),unsigned(groups.size()));
+        if(inserted)groups.push_back(std::move(group));
+        return it->second;
+    };
+    for(auto &[descriptor,head]:recipe->heads) {
+        auto &indices=head_groups[descriptor];Group group;bool begun=false;
+        for(auto &face:head) {
+            const unsigned x=(face.header[2]&63)*32;
+            const unsigned side=face.limit?(x>=128?1:2):0;
+            if(face.limit && x+(32u<<(face.header[0]&7))>(side==1?192:128))
+                throw std::runtime_error("VF2 face texture crosses component boundary");
+            if(begun && side!=group.side) {indices.push_back(intern(std::move(group)));group={};begun=false;}
+            group.side=side;group.faces.push_back(std::move(face));begun=true;
+        }
+        if(begun)indices.push_back(intern(std::move(group)));
+    }
+    std::map<std::pair<unsigned,unsigned>,unsigned> baked_ids;
+    Decoder baker=std::move(recipe->decoder);
+    size_t compressed_bytes=0;
+    for(const auto &key:recipe->keys) {
+        std::vector<unsigned> indices;
+        for(unsigned group_id:head_groups.at(key[0])) {
+            const auto &group=groups[group_id];const unsigned patch_id=group.side?key[group.side]:0;
+            auto [it,inserted]=baked_ids.emplace(std::make_pair(group_id,patch_id),unsigned(compiled->pieces.size()));
+            if(inserted) {
+                Mesh mesh;
+                if(group.side) {
+                    // Zero means the untouched native atlas, not patch frame 0.
+                    const unsigned x=group.side==1?64:0,width=group.side==1?32:64;
+                    for(unsigned row=0;row<32;++row) {
+                        const auto *data=patch_id?recipe->patches[patch_id-1].blocks.data()+row*width:
+                            source.sheet.data()+(384+row)*512+x;
+                        std::copy_n(data,width,baker.sheet.begin()+(384+row)*512+x);
+                    }
+                    for(const auto &face:group.faces)
+                        baker.face(mesh,face.header,face.points[0],face.points[1],face.points[2],
+                                   face.uv[0],face.uv[1],face.uv[2],0,face.limit,face.detail);
+                } else for(const auto &face:group.faces)mesh.insert(mesh.end(),face.fixed.begin(),face.fixed.end());
+                Packed packed{unsigned(mesh.size()),{}};
+                if(!mesh.empty()) {
+                    const size_t size=mesh.size()*sizeof(vf1_models::Triangle);
+                    uLongf length=compressBound(size);packed.data.resize(length);
+                    if(compress2(packed.data.data(),&length,reinterpret_cast<const Bytef*>(mesh.data()),size,1)!=Z_OK)
+                        throw std::runtime_error("cannot compress VF2 face component");
+                    packed.data.resize(length);compressed_bytes+=length;
+                }
+                if(compressed_bytes>32*1024*1024 || compiled->pieces.size()>=8192)
+                    throw std::runtime_error("oversized VF2 compiled face bank");
+                compiled->pieces.push_back(std::move(packed));
+            }
+            indices.push_back(it->second);
+        }
+        compiled->frames.push_back(std::move(indices));
+    }
+    out.face_frame_count=unsigned(compiled->frames.size());
+    out.face_frames={out.parts[size_t(vf1_models::Part::Head)]};
+    out.decode_face=[compiled=std::shared_ptr<const Bank>(std::move(compiled))](unsigned frame) {
+        if(frame>=compiled->frames.size())throw std::out_of_range("VF2 face frame outside bank");
+        size_t count=0;for(unsigned id:compiled->frames[frame])count+=compiled->pieces[id].count;
+        if(count>100000)throw std::runtime_error("oversized VF2 compiled head");
+        Mesh result(count);size_t offset=0;
+        for(unsigned id:compiled->frames[frame]) {
+            const auto &piece=compiled->pieces[id];
+            if(piece.count) {
+                uLongf size=size_t(piece.count)*sizeof(vf1_models::Triangle);
+                const auto expected=size;
+                if(uncompress(reinterpret_cast<Bytef*>(result.data()+offset),&size,piece.data.data(),piece.data.size())!=Z_OK || size!=expected)
+                    throw std::runtime_error("invalid VF2 compressed face component");
+                offset+=piece.count;
+            }
+        }
+        return result;
+    };
+}
 }
 bool load(const std::string &path,vf1_models::Assets &out,std::string &error,unsigned fighter) {
     try {
@@ -409,6 +671,7 @@ bool load(const std::string &path,vf1_models::Assets &out,std::string &error,uns
             }
             portrait.pixels[y*48+x]=rgb;
         }
+        faces(d,next);
         out=std::move(next);error.clear();return true;
     } catch(const std::exception &e) {error=e.what();return false;}
 }

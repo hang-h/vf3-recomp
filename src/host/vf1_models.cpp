@@ -2,6 +2,7 @@
 #include "vf1_models.h"
 #include "rom_zip.h"
 #include <cmath>
+#include <map>
 #include <stdexcept>
 #include <utility>
 
@@ -173,6 +174,76 @@ bool load(const std::string &path, Assets &out, std::string &error, unsigned fig
             if (list) d.part(head, d.word(list + 4 * frames[part]));
         }
         if (head.empty()) throw std::runtime_error("missing fighter head");
+        // V60 ff06ac consumes the seven native face scripts at head+0x24.
+        // Each script starts with its duration, followed by component-number /
+        // duration-byte frame-index records, and an ff terminator. Retain the
+        // source's asymmetric eyes and duplicate channel writes in their order.
+        // Full heads are shared by descriptor tuple, so reverse animations do
+        // not duplicate the same geometry. Index zero is the old neutral head.
+        using face_pose = std::array<uint8_t,9>;
+        using face_key = std::array<uint32_t,9>;
+        face_pose neutral{};
+        for (unsigned i=0;i<9;++i) neutral[i]=uint8_t(frames[i]);
+        const auto descriptors = [&](face_pose pose) {
+            // Native ff070b..ff073f keeps Kage's masked face concealed: with
+            // component zero at zero, components 1..8 all use frame zero.
+            // His expression scripts must never expose the unmasked mouth.
+            if (fighter==5 && pose[0]==0)
+                for (unsigned component=1;component<9;++component) pose[component]=0;
+            face_key result{};
+            for (unsigned component=0;component<9;++component) {
+                const uint32_t list=d.word(lists+4*component);
+                if (!list) continue;
+                // Original lists contain at most 2 fixed-part, 17 eye/brow,
+                // and 49 mouth entries. A script cannot walk into the next list.
+                const unsigned limit=component<4 ? 2 : component==8 ? 49 : 17;
+                if (pose[component]>=limit) throw std::runtime_error("invalid VF1 face frame");
+                result[component]=d.word(list+4*pose[component]);
+            }
+            return result;
+        };
+        std::map<face_key,uint16_t> face_indices;
+        prepared.face_frames.push_back(head);
+        face_indices.emplace(descriptors(neutral),0);
+        const auto add_face = [&](const face_pose &pose) {
+            const auto key=descriptors(pose);
+            if (const auto found=face_indices.find(key);found!=face_indices.end()) return found->second;
+            if (prepared.face_frames.size()>=512) throw std::runtime_error("too many VF1 facial frames");
+            Mesh decoded;
+            for (uint32_t descriptor:key) if (descriptor) d.part(decoded,descriptor);
+            if (decoded.empty()) throw std::runtime_error("empty VF1 facial frame");
+            const auto index=uint16_t(prepared.face_frames.size());
+            face_indices.emplace(key,index);
+            prepared.face_frames.push_back(std::move(decoded));
+            return index;
+        };
+        for (unsigned animation=1;animation<=7;++animation) {
+            uint32_t cursor=d.word(lists+0x20+4*animation);
+            if (!cursor) continue;
+            const unsigned duration=byte(cursor++);
+            if (!duration || duration>64) throw std::runtime_error("invalid VF1 facial duration");
+            std::vector<face_pose> poses(duration,neutral);
+            bool ended=false;
+            for (unsigned record_index=0;record_index<=9;++record_index) {
+                const unsigned component=byte(cursor++);
+                if (component==255) { ended=true; break; }
+                if (component>=9 || record_index==9)
+                    throw std::runtime_error("invalid VF1 facial script channel");
+                for (unsigned frame=0;frame<duration;++frame) poses[frame][component]=byte(cursor++);
+            }
+            if (!ended) throw std::runtime_error("unterminated VF1 facial script");
+            auto &timeline=prepared.face_animations[animation].frames;
+            for (const auto &pose:poses) timeline.push_back(add_face(pose));
+        }
+        // No independent looping blink timer has been established in VF1:
+        // animation 7 is the selection expression, played once and held by
+        // fce81a..fce897. Expose its actual eye-list endpoint for VF3's blink
+        // state without inventing a source animation/timer in slot zero.
+        face_pose closed=neutral;
+        closed[4]=closed[6]=16;
+        prepared.face_states[2]=add_face(closed);
+        if (!prepared.face_animations[1].frames.empty())
+            prepared.face_states[1]=prepared.face_animations[1].frames.back();
         for (size_t side = 0; side < 2; ++side) {
             const uint32_t table = d.word(record + (side ? 0x5e : 0x62));
             for (size_t pose = 0; pose < 32; ++pose)

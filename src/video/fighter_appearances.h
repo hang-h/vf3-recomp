@@ -23,10 +23,17 @@ public:
         model.enabled=true;
         entries={};entries[0]={0,++clock,std::move(model)};path=zip;failed={};return true;
     }
-    size_t apply(Scene &scene,unsigned outfits,unsigned previews,unsigned fighter=0) {
+    size_t apply(Scene &scene,unsigned outfits,unsigned previews,unsigned fighter=0,
+                 const fighter_expression::Poses &poses={}) {
         if(!enabled || !(outfits|previews))return 0;
         auto *model=get(fighter);
-        return model ? model->apply(scene,outfits,previews) : 0;
+        if(!model)return 0;
+        std::array<uint16_t,2> frames{};
+        for(const auto &pose:poses)if(pose.valid && fighter_roster::from_actor(pose.actor)==fighter) {
+            const unsigned outfit=pose.actor<13?0:1;
+            if((outfits|previews)&(1u<<outfit))frames[outfit]=model->expression_frame(pose);
+        }
+        return model->apply(scene,outfits,previews,frames);
     }
     const vf1_models::Portrait &portrait(unsigned fighter=0) const {
         for(const auto &entry:entries)if(entry.fighter==fighter)return entry.model.portrait();
