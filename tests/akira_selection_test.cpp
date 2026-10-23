@@ -91,5 +91,44 @@ int main()
     choice.reset(); c={}; choice.update(c,s,true,false);
     press_up(0,true,false); assert(choice.mask(s,1)==1);
     press_up(0,true,false); assert(choice.mask(s,1)==0); // missing VF2 is skipped
-    puts("Akira selection: VF3/VF1/VF2 cycle, player isolation, edges, confirm, navigation and missing-ROM checks passed");
+    // Final KO clears the human task before replay/You Lose. Preserve only the
+    // defeated player's selected appearance while the same battle actors exist.
+    for(unsigned player=0;player<2;++player)for(unsigned variant:{1u,2u}) {
+        auto start=[&] {
+            choice.reset();s={};
+            s[player]={true,true,true,player+1,true,player ? 13u : 0u,false};
+            s[player^1].actor=20;
+            c={};choice.update(c,s,true,true);
+            for(unsigned i=0;i<variant;++i)press_up(player);
+            s[player].selecting=s[player].preview=false;
+            s[player].fighting=true;
+            c={};choice.update(c,s,true,true);
+            assert(choice.mask(s,variant)==(1u<<player));
+        };
+        start();
+        s[player].human=s[player].fighting=false;
+        assert(choice.mask(s,variant)==(1u<<player)); // same frame as final KO
+        c={};choice.update(c,s,true,true);
+        assert(choice.mask(s,variant)==(1u<<player)); // replay and result pose
+        assert(choice.mask(s,3-variant)==0);
+        s[player^1].actor=7; // next actor setup, even if Akira's ID remains
+        assert(choice.mask(s,variant)==0);
+        choice.update(c,s,true,true);
+        s[player^1].actor=20; // attract reuses these fighters later
+        choice.update(c,s,true,true);
+        assert(choice.mask(s,variant)==0);
+        start();
+        s[player].human=s[player].fighting=false;
+        s[player^1].preview=true; // challenger/new character selection
+        assert(choice.mask(s,variant)==0);
+        start();
+        s[player].human=s[player].fighting=false;
+        choice.update(c,s,variant!=1,variant!=2);
+        assert(choice.mask(s,variant)==0); // removed companion cannot linger
+        start();
+        s[player].human=s[player].fighting=false;
+        choice.reset();
+        assert(choice.mask(s,variant)==0);
+    }
+    puts("Akira selection: cycle, isolation, edges, confirm, navigation, missing ROMs and defeat/attract lifetime passed");
 }

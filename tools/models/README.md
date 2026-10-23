@@ -95,6 +95,11 @@ have not been exhaustively verified.
   fighting input remain native. Rendered actor IDs at `0x1087f0 + player * 0x2000`
   map each player's choice to the standard/alternate head (0/13); ambiguous
   identities remain original. Appearance changes clear frame interpolation.
+  At the final KO the player task becomes inactive before the defeat replay and
+  `You Lose` pose finish. The selected appearance stays bound to the last battle
+  actor pair through that result sequence. A new selection, changed actor pair,
+  missing companion or host reset clears this binding, so attract-mode fighters
+  do not inherit the defeated player's appearance.
   The host publishes selection hints with the rendered frame, avoiding concurrent
   reads of emulated RAM from the UI.
 
@@ -138,6 +143,9 @@ build/bin/akira-selection-check /path/to/vf3.zip /path/to/vf.zip tools/models/ak
 build/bin/akira-selection-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-select-cycle-vf3.txt 2100 0 0 /path/to/vf2.zip 0 0
 build/bin/akira-selection-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-select-p2-vf2.txt 2400 0 0 /path/to/vf2.zip 2 1
 build/bin/akira-selection-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-select-mirror-mixed.txt 3500 1 1 /path/to/vf2.zip 2 1
+build/bin/akira-selection-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-defeat-vf1.txt 6000 1 1
+build/bin/akira-selection-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-defeat-vf2.txt 6000 0 0 /path/to/vf2.zip 1 1
+build/bin/akira-selection-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-defeat-vf1.txt 9200 0 0
 build/bin/akira-check /path/to/vf3.zip /path/to/vf2.zip tools/models/akira-attacks.txt build/akira-vf2 2100 1 vf2
 build/bin/akira-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-guard.txt build/akira-guard
 build/bin/akira-check /path/to/vf3.zip /path/to/vf.zip tools/models/akira-attacks.txt build/akira-attacks
