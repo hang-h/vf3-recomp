@@ -71,23 +71,72 @@ struct Decoder {
         } else if(index>=30)throw std::runtime_error("unsupported VF2 costume palette channel");
         return uint8_t(std::max(0,int(value&255)-64)*255/191);
     }
-    uint32_t colour(const std::array<uint16_t,4> &h,const UV &uv) const {
-        unsigned luma=40;
-        if(h[0]&0x4000) {
-            if(!(h[2]&0x1000) || sheet.empty())throw std::runtime_error("VF2 character texture sheet unavailable");
-            const unsigned width=32u<<(h[0]&7),height=32u<<((h[0]>>3)&7);
-            unsigned x=unsigned(uv[0]),y=unsigned(uv[1]);
-            if((h[0]&0x100) && (x&width))x=~x;
-            if((h[0]&0x200) && (y&height))y=~y;
-            x=(x&(width-1))+32*(h[2]&63);
-            y=(y&(height-1))+32*((h[2]>>6)&31);
-            x&=2047;y&=1023;
+    unsigned filtered_texel(const std::array<uint16_t,4> &h,const UV &uv) const {
+        // Model 2 interpolates texture indices and cutout coverage before its
+        // luminance lookup. Filtering RGB, or treating index 15 as black,
+        // instead introduces dark fringes around the eyes and lips.
+        const unsigned width=32u<<(h[0]&7),height=32u<<((h[0]>>3)&7);
+        auto axis=[](float coordinate,unsigned size,bool mirror,bool wrap) {
+            int fixed=int(coordinate*256);
+            if(mirror && (fixed&int(size<<8)))fixed=~fixed;
+            fixed-=128;
+            unsigned fraction=unsigned(fixed)&255;
+            unsigned a=unsigned(fixed>>8)&(size-1),b=(a+1)&(size-1);
+            if(!wrap && b==0) {
+                if(fraction>=128) {a=b;++b;fraction=0;}
+                else {b=a;--a;fraction=256;}
+            }
+            return std::array<unsigned,3>{a,b,fraction};
+        };
+        const auto u=axis(uv[0],width,h[0]&0x100,(h[0]&0x40) && !(h[0]&0x100));
+        const auto v=axis(uv[1],height,h[0]&0x200,(h[0]&0x80) && !(h[0]&0x200));
+        auto texel=[&](unsigned x,unsigned y) {
+            x+=32*(h[2]&63);y+=32*((h[2]>>6)&31);
             if(x>=1024) {x-=1024;y^=1024;}
             const size_t offset=(size_t(y>>1)<<9)+(x>>1);
             if(offset>=sheet.size())throw std::runtime_error("VF2 texture coordinate outside sheet");
-            const unsigned texel=(sheet[offset]>>(((~y&1)<<3)+((~x&1)<<2)))&15;
-            if((h[0]&0x2000) && texel==15)return 0;
-            luma=std::min<unsigned>(*bytes(CPU,0x78d10+((h[1]&255)*128+texel*8),1),63);
+            const unsigned value=((sheet[offset]>>(((~y&1)<<3)+((~x&1)<<2)))&15)<<4;
+            return value==240 ? value : value|0x00800000u;
+        };
+        auto lerp=[](uint32_t a,uint32_t b,unsigned fraction) {
+            return (a+(((b-a)*fraction)>>8))&0x00ff00ffu;
+        };
+        uint32_t a=texel(u[0],v[0]),b=texel(u[1],v[0]);
+        uint32_t c=texel(u[0],v[1]),d=texel(u[1],v[1]);
+        if(a==240)a=b&255;
+        if(b==240)b=a&255;
+        if(c==240)c=d&255;
+        if(d==240)d=c&255;
+        a=lerp(a,b,u[2]);c=lerp(c,d,u[2]);
+        if(a==240)a=c&255;
+        if(c==240)c=a&255;
+        return lerp(a,c,v[2]);
+    }
+    uint32_t colour(const std::array<uint16_t,4> &h,const UV &uv,bool detail=false) const {
+        unsigned luma=40;
+        if(h[0]&0x4000) {
+            if(!(h[2]&0x1000) || sheet.empty())throw std::runtime_error("VF2 character texture sheet unavailable");
+            unsigned lookup;
+            if(detail) {
+                const unsigned texel=filtered_texel(h,uv);
+                if(texel<0x00400000)return 0;
+                lookup=(texel&255)>>1;
+            } else {
+                const unsigned width=32u<<(h[0]&7),height=32u<<((h[0]>>3)&7);
+                unsigned x=unsigned(uv[0]),y=unsigned(uv[1]);
+                if((h[0]&0x100) && (x&width))x=~x;
+                if((h[0]&0x200) && (y&height))y=~y;
+                x=(x&(width-1))+32*(h[2]&63);
+                y=(y&(height-1))+32*((h[2]>>6)&31);
+                x&=2047;y&=1023;
+                if(x>=1024) {x-=1024;y^=1024;}
+                const size_t offset=(size_t(y>>1)<<9)+(x>>1);
+                if(offset>=sheet.size())throw std::runtime_error("VF2 texture coordinate outside sheet");
+                const unsigned texel=(sheet[offset]>>(((~y&1)<<3)+((~x&1)<<2)))&15;
+                if((h[0]&0x2000) && texel==15)return 0;
+                lookup=texel*8;
+            }
+            luma=std::min<unsigned>(*bytes(CPU,0x78d10+((h[1]&255)*128+lookup),1),63);
         }
         const auto pal=half(Main,0x100000+2*((h[3]>>6)&1023));
         return 0xff000000u | uint32_t(channel(pal&31,0,luma))<<16 |
@@ -102,12 +151,12 @@ struct Decoder {
     void face(Mesh &out,const std::array<uint16_t,4> &h,const Point &a,const Point &b,const Point &c,
               const UV &ua,const UV &ub,const UV &uc,unsigned depth,unsigned limit,bool detail=false) const {
         const UV center={(ua[0]+ub[0]+uc[0])/3,(ua[1]+ub[1]+uc[1])/3};
-        const auto rgb=colour(h,center);
+        const auto rgb=colour(h,center,detail);
         float extent=0;
         for(unsigned k=0;k<2;++k)extent=std::max(extent,std::max({ua[k],ub[k],uc[k]})-std::min({ua[k],ub[k],uc[k]}));
         bool varies=depth==0;
         for(const auto &u:{ua,ub,uc}) {
-            const auto sample=colour(h,u);
+            const auto sample=colour(h,u,detail);
             if((sample>>24)!=(rgb>>24))varies=true;
             for(unsigned shift:{0,8,16})if(std::abs(int((sample>>shift)&255)-int((rgb>>shift)&255))>12)varies=true;
         }
@@ -119,6 +168,35 @@ struct Decoder {
             for(unsigned k=0;k<2;++k) {uab[k]=(ua[k]+ub[k])/2;ubc[k]=(ub[k]+uc[k])/2;uca[k]=(uc[k]+ua[k])/2;}
             face(out,h,a,ab,ca,ua,uab,uca,depth+1,limit,detail);face(out,h,ab,b,bc,uab,ub,ubc,depth+1,limit,detail);
             face(out,h,ca,bc,c,uca,ubc,uc,depth+1,limit,detail);face(out,h,ab,bc,ca,uab,ubc,uca,depth+1,limit,detail);
+        } else if(detail) {
+            // Keep a cutout's boundary at its half-coverage contour, rather
+            // than admitting or discarding an entire baked triangle. Otherwise
+            // the eyes acquire sawtooth edges even with correctly filtered ink.
+            struct Sample {Point point;UV uv;unsigned coverage;};
+            const std::array<Sample,3> corners={{{a,ua,filtered_texel(h,ua)>>16},
+                {b,ub,filtered_texel(h,ub)>>16},{c,uc,filtered_texel(h,uc)>>16}}};
+            const unsigned inside=(corners[0].coverage>=64)+(corners[1].coverage>=64)+(corners[2].coverage>=64);
+            if(inside==0 || inside==3) {
+                if(rgb>>24)triangle(out,rgb,a,b,c);
+                return;
+            }
+            std::array<Sample,4> clipped;unsigned count=0;
+            for(unsigned i=0;i<3;++i) {
+                const auto &p=corners[i],&q=corners[(i+1)%3];
+                if(p.coverage>=64)clipped[count++]=p;
+                if((p.coverage>=64)==(q.coverage>=64))continue;
+                const float fraction=(64.f-p.coverage)/(float(q.coverage)-p.coverage);
+                Sample intersection{};
+                for(unsigned k=0;k<3;++k)intersection.point[k]=p.point[k]+fraction*(q.point[k]-p.point[k]);
+                for(unsigned k=0;k<2;++k)intersection.uv[k]=p.uv[k]+fraction*(q.uv[k]-p.uv[k]);
+                clipped[count++]=intersection;
+            }
+            for(unsigned i=1;i+1<count;++i) {
+                UV center;
+                for(unsigned k=0;k<2;++k)center[k]=(clipped[0].uv[k]+clipped[i].uv[k]+clipped[i+1].uv[k])/3;
+                const auto sample=colour(h,center,true);
+                if(sample>>24)triangle(out,sample,clipped[0].point,clipped[i].point,clipped[i+1].point);
+            }
         } else if(rgb>>24)triangle(out,rgb,a,b,c);
     }
     Mesh part(unsigned descriptor,unsigned subdivision=2) const {

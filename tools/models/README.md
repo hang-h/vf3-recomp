@@ -44,7 +44,11 @@ have not been exhaustively verified.
   cached hand poses, then sampled and stripped of transparent samples. Eye and
   mouth cutouts use a finer grid (0.75-texel target, at most five levels) so thin
   pupils and lips cannot disappear between otherwise uniform colour samples.
-  The resulting body has 51,962 triangles and each hand pose has 760 triangles.
+  On those facial cutouts, native Model 2 bilinear index/coverage filtering runs
+  before the luminance lookup. Boundary triangles are clipped to the 50%
+  coverage contour instead of retaining or discarding the whole triangle.
+  Other body textures keep their existing sampling. The resulting body has
+  53,748 triangles and each hand pose has 760 triangles.
   These cutouts are coplanar with skin in the original head. Model 2's painter
   order preserves them, but Real3D's depth buffer and colour batching do not.
   Only head descriptor `0x19c`, alpha-cutout palettes 1/2 are lifted outward by
