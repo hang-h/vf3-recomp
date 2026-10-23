@@ -21,6 +21,7 @@ bool equal_mesh(const vf1_models::Mesh &a,const vf1_models::Mesh &b)
 }
 bool equal(const vf1_models::Assets &a, const vf1_models::Assets &b)
 {
+    if(a.source_joints!=b.source_joints)return false;
     if(a.portrait.width!=b.portrait.width || a.portrait.height!=b.portrait.height ||
        a.portrait.pixels!=b.portrait.pixels)return false;
     for(size_t part=0;part<a.parts.size();++part)if(!equal_mesh(a.parts[part],b.parts[part]))return false;
@@ -28,7 +29,8 @@ bool equal(const vf1_models::Assets &a, const vf1_models::Assets &b)
         if(!equal_mesh(a.hands[side][pose],b.hands[side][pose]))return false;
     if(!equal_mesh(a.belt_knot,b.belt_knot))return false;
     const auto same_strand=[](const auto &x,const auto &y) {
-        if(x.bone!=y.bone || x.anchor!=y.anchor || x.lengths!=y.lengths)return false;
+        if(x.bone!=y.bone || x.anchor!=y.anchor || x.lengths!=y.lengths ||
+           x.rest_direction!=y.rest_direction)return false;
         if(x.segments.size()!=y.segments.size())return false;
         for(size_t segment=0;segment<x.segments.size();++segment)if(!equal_mesh(x.segments[segment],y.segments[segment]))return false;
         return true;
@@ -36,6 +38,8 @@ bool equal(const vf1_models::Assets &a, const vf1_models::Assets &b)
     for(size_t chain=0;chain<3;++chain)if(!same_strand(a.strands[chain],b.strands[chain]))return false;
     if(a.extra_head_ribbons.size()!=b.extra_head_ribbons.size())return false;
     for(size_t i=0;i<a.extra_head_ribbons.size();++i)if(!same_strand(a.extra_head_ribbons[i],b.extra_head_ribbons[i]))return false;
+    if(a.extra_strands.size()!=b.extra_strands.size())return false;
+    for(size_t i=0;i<a.extra_strands.size();++i)if(!same_strand(a.extra_strands[i],b.extra_strands[i]))return false;
     return true;
 }
 struct temp_folder {
@@ -98,6 +102,66 @@ int main(int argc, char **argv)
             require(std::abs(s.lengths[i]-(s.bone==2?.08f:.095f))<1e-5f,"incorrect native accessory length");
         }
         const auto reference = models;
+        constexpr const char *names[]={"Akira","Pai","Lau","Wolf","Jeffry","Kage","Sarah","Jacky","Shun","Lion"};
+        constexpr unsigned head_chains[]={2,2,1,1,6,2,3,15,2,3};
+        constexpr unsigned body_chains[]={2,0,0,0,0,2,0,0,1,4};
+        std::set<std::vector<uint32_t>> portraits;
+        for(unsigned fighter=0;fighter<10;++fighter) {
+            vf1_models::Assets roster;
+            require(vf2_models::load(argv[1],roster,error,fighter),std::string(names[fighter])+": "+error);
+            require(roster.portrait.available() && roster.portrait.width==48 && roster.portrait.height==88,
+                    std::string(names[fighter])+": missing original select portrait");
+            require(portraits.insert(roster.portrait.pixels).second,"fighter reused another portrait");
+            for(const auto &part:roster.parts) {
+                require(!part.empty(),std::string(names[fighter])+": missing body part");
+                for(const auto &t:part) {
+                    require((t.colour>>24)==255,"invalid fighter colour");
+                    for(const auto &p:t.points)for(float v:p)require(std::isfinite(v),"invalid fighter geometry");
+                }
+            }
+            for(const auto &side:roster.hands) {
+                for(const auto &pose:side)require(!pose.empty(),"missing native hand pose");
+                require(!equal_mesh(side[0],side[31]),"fighter hand poses collapsed");
+            }
+            require(roster.source_joints[0]==std::array<float,3>{},"world root baked into source skeleton");
+            for(unsigned slot:{1,3,4,6,7,10,11,13,14})
+                require(roster.source_joints[slot][0]>.1f && roster.source_joints[slot][0]<.6f,
+                        "native skeletal proportions missing");
+            require(roster.source_joints[2][2]<0 && roster.source_joints[5][2]>0,
+                    "shoulder offsets use incorrect shared joint indexing");
+            require(roster.source_joints[10][0]>roster.source_joints[9][0] &&
+                    roster.source_joints[13][0]>roster.source_joints[12][0],
+                    "leg fitting reads hip offset instead of thigh length");
+            unsigned heads=0,bodies=0;
+            unsigned white_beard_triangles=0;
+            auto chain=[&](const vf1_models::Strand &s) {
+                if(s.segments.empty())return;
+                require(s.bone==1 || s.bone==2 || s.bone==9,"invalid native accessory attachment");
+                require(s.rest_direction==std::array<float,3>{0,0,fighter==7?1.f:-1.f},
+                        "upright hair was treated as a hanging braid");
+                (s.bone==2?heads:bodies)++;
+                require(s.segments.size()==s.lengths.size(),"accessory segment/length mismatch");
+                for(size_t i=0;i<s.segments.size();++i) {
+                    require(!s.segments[i].empty(),"empty native accessory segment");
+                    require(s.lengths[i]>0 && s.lengths[i]<.5f,"invalid native accessory length");
+                    if(fighter==8 && s.bone==2)for(const auto &t:s.segments[i]) {
+                        const unsigned r=(t.colour>>16)&255,g=(t.colour>>8)&255,b=t.colour&255;
+                        require(!(r>g+50 && r>b+50),"Shun beard reused Akira's red mouth colour curve");
+                        white_beard_triangles+=r>150 && g>150 && b>150;
+                    }
+                }
+            };
+            for(const auto &s:roster.strands)chain(s);
+            for(const auto &s:roster.extra_head_ribbons)chain(s);
+            for(const auto &s:roster.extra_strands)chain(s);
+            require(heads==head_chains[fighter] && bodies==body_chains[fighter],
+                    std::string(names[fighter])+": native accessories omitted or duplicated");
+            if(fighter==8)require(white_beard_triangles>0,"Shun's source white beard is missing");
+            if(fighter)require(!equal_mesh(roster.parts.back(),reference.parts.back()),"fighter reused Akira's head");
+            else require(equal(roster,reference),"explicit Akira differs from default load");
+        }
+        require(!vf2_models::load(argv[1],models,error,10) && !error.empty() && equal(models,reference),
+                "unsupported fighter changed destination");
         temp_folder temp;
         require(!vf2_models::load((temp.path / "missing.zip").string(), models, error), "missing ZIP accepted");
         require(!error.empty() && equal(models, reference), "missing ZIP changed destination");
@@ -126,7 +190,8 @@ int main(int argc, char **argv)
         require(vf2_models::load(argv[1], models, error) && error.empty() && equal(models, reference),
                 "repeat load differs or retains error");
         std::cout << models.parts.size() << " unscaled Akira parts, " << total
-                  << " triangles, 64 native hand poses; missing, malformed, CRC damage, and transactional reload checks passed.\n";
+                  << " triangles preserved; all 10 VF2 fighters, 640 native hand poses, portraits, skeletons and accessories; "
+                  << "missing, malformed, CRC damage, invalid fighter and transactional reload checks passed.\n";
         return 0;
     } catch (const std::exception &e) {
         std::cerr << e.what() << '\n';

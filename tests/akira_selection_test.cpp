@@ -1,4 +1,5 @@
 #include "../src/host/akira_selection.h"
+#include "../src/host/akira_portrait.h"
 #include <cassert>
 #include <cstdio>
 int main()
@@ -56,7 +57,7 @@ int main()
     s[1].selecting=false;
     c={}; c.up[1]=true; choice.update(c,s,true);
     assert(choice.mask(s)==2 && c.up[1]); // fighting up remains a jump
-    s[0].akira=false;
+    s[0].akira=false; s[0].fighter=255;
     c={}; c.up[0]=true; choice.update(c,s,true);
     assert(c.up[0] && choice.mask(s)==2); // another fighter remains untouched
     s[1].selecting=true;
@@ -130,5 +131,94 @@ int main()
         choice.reset();
         assert(choice.mask(s,variant)==0);
     }
-    puts("Akira selection: cycle, isolation, edges, confirm, navigation, missing ROMs and defeat/attract lifetime passed");
+    // Every shared fighter cycles only through editions in which it exists.
+    for(unsigned fighter=0;fighter<fighter_roster::count;++fighter)for(unsigned player=0;player<2;++player) {
+        choice.reset();s={};
+        const unsigned game=fighter_roster::game_ids[fighter];
+        s[player]={true,true,fighter==0,player+1,true,game+13*player,false,fighter};
+        s[player^1].actor=12;
+        c={};choice.update(c,s,true,true);
+        press_up(player);
+        const unsigned first=fighter<8 ? 1 : 2;
+        assert(choice.mask(s,first)==(1u<<player) && choice.mask(s,3-first)==0);
+        if(fighter<8) {press_up(player);assert(choice.mask(s,2)==(1u<<player));}
+        press_up(player);assert(choice.mask(s,1)==0 && choice.mask(s,2)==0);
+        press_up(player);assert(choice.mask(s,first)==(1u<<player));
+        // Each query addresses only this fighter's preview, never another one.
+        assert(AkiraSelection::previews(s,1u<<player,fighter)==player+1);
+        assert(AkiraSelection::previews(s,1u<<player,(fighter+1)%10)==0);
+        s[player].selecting=s[player].preview=false;s[player].fighting=true;
+        c={};choice.update(c,s,true,true);
+        s[player].human=s[player].fighting=false;
+        choice.update(c,s,true,true);assert(choice.mask(s,first)==(1u<<player));
+        // Same actors with a different cursor/owner cannot retain the result.
+        s[player].fighter=(fighter+1)%10;
+        assert(choice.mask(s,first)==0);
+        choice.update(c,s,true,true);
+        s[player].fighter=fighter;
+        assert(choice.mask(s,first)==0);
+        // Verify native RAM decoding and alternate costume routing for both sides.
+        const size_t base=0x108000+0x80*player;
+        std::memcpy(ram.data()+base,&phase,4);
+        ram[(base+0x42)^3]=uint8_t(game+13*player);
+        ram[(0x1087f0+0x2000*player)^3]=uint8_t(game+13*player);
+        ram[(0x1087f0+0x2000*(player^1))^3]=12;
+        const auto state=AkiraSelection::snapshot(ram);
+        assert(state[player].fighter==fighter && state[player].akira==(fighter==0));
+        assert(state[player].outfit==player+1);
+        assert(AkiraSelection::outfits(ram,1u<<player,fighter)==player+1);
+        assert(AkiraSelection::outfits(ram,1u<<player,(fighter+1)%10)==0);
+    }
+    // Cursor movement resets a locked choice, and the other player's edition survives.
+    choice.reset();s={{{true,true,true},{true,true,true}}};
+    c={};choice.update(c,s,true,true);press_up(0);press_up(1);
+    c={};c.punch[0]=true;choice.update(c,s,true,true);
+    s[0].fighter=1;s[0].akira=false;
+    c={};choice.update(c,s,true,true);assert(choice.mask(s,1)==2);
+    press_up(0);assert(choice.mask(s,1)==3);
+    // Unsupported VF3-only fighters leave every control native.
+    for(unsigned game=0;game<26;++game)if(fighter_roster::from_actor(game)==255) {
+        ram[0x108042^3]=uint8_t(game);std::memcpy(ram.data()+0x108000,&phase,4);
+        s=AkiraSelection::snapshot(ram);choice.reset();c={};choice.update(c,s,true,true);
+        c.up[0]=true;c.down[0]=true;choice.update(c,s,true,true);
+        assert(c.up[0] && c.down[0] && choice.mask(s,1)==0 && choice.mask(s,2)==0);
+        c={};c.up[0]=true;choice.update(c,s,true,true);assert(c.up[0]);
+    }
+    // Shun/Lion have no VF1 edition: with only VF1 installed, UP stays native.
+    for(unsigned fighter:{8u,9u}) {
+        choice.reset();s={};s[0]={true,true,false,1,true,255,false,fighter};
+        c={};choice.update(c,s,true,false);c.up[0]=true;choice.update(c,s,true,false);
+        assert(c.up[0] && choice.mask(s,1)==0 && choice.mask(s,2)==0);
+    }
+    // Composite only the selected fighter's measured cell, retaining marker ink.
+    constexpr unsigned width=496,height=384;
+    constexpr unsigned origins[]={33,104,176,248,320,392};
+    constexpr unsigned widths[]={67,68,68,68,68,67};
+    vf1_models::Portrait picture;picture.width=56;picture.height=64;
+    picture.pixels.assign(56*64,0xffa06020);
+    for(unsigned fighter=0;fighter<10;++fighter) {
+        std::vector<uint32_t> pixels(width*height,0xff123456);
+        const unsigned x0=origins[fighter%6],y0=273+47*(fighter/6),w=widths[fighter%6];
+        pixels[(y0+30)*width+x0+3]=0xff0000ff; // 1P's exact red ink (ABGR)
+        pixels[(y0+30)*width+x0+4]=0xff000000; // black marker outline
+        pixels[(y0+32)*width+x0+5]=0xff0008b4; // red portrait background, not marker
+        const auto before=pixels;
+        assert(akira_portrait::draw(pixels,width,height,picture,fighter));
+        for(unsigned y=0;y<height;++y)for(unsigned x=0;x<width;++x) {
+            const size_t i=size_t(y)*width+x;
+            if(x<x0 || x>=x0+w || y<y0 || y>=y0+42)assert(pixels[i]==before[i]);
+        }
+        assert(pixels[(y0+30)*width+x0+3]==0xff0000ff);
+        assert(pixels[(y0+30)*width+x0+4]==0xff000000);
+        assert(pixels[(y0+32)*width+x0+5]!=before[(y0+32)*width+x0+5]);
+        assert(pixels[(y0+20)*width+x0+w/2]==0xff2060a0); // ARGB to ABGR
+    }
+    std::vector<uint32_t> untouched(width*height,0xff123456);
+    const auto original_pixels=untouched;
+    for(unsigned unsupported:{10u,11u,255u})assert(!akira_portrait::draw(untouched,width,height,picture,unsupported));
+    assert(untouched==original_pixels);
+    assert(!akira_portrait::draw(untouched,100,100,picture,1));
+    picture.width=48;picture.height=88;picture.pixels.assign(48*88,0xffa06020);
+    assert(akira_portrait::draw(untouched,width,height,picture,9));
+    puts("Roster selection: all fighters, cycle, isolation, edges, confirm, navigation, missing editions and defeat/attract lifetime passed");
 }

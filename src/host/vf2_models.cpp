@@ -7,6 +7,7 @@
 #include "vf2_texture_decode.h"
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <stdexcept>
 #include <utility>
 
@@ -33,6 +34,8 @@ constexpr Rom roms[] = {
 struct Decoder {
     std::array<std::vector<uint8_t>, RegionCount> regions;
     std::vector<uint16_t> sheet;
+    unsigned head_descriptor = 0x19c;
+    unsigned native_actor = 0;
     const uint8_t *bytes(int region, size_t address, size_t count) const {
         const auto &r=regions[region];
         if(address>r.size() || count>r.size()-address) throw std::runtime_error("VF2 model address outside ROM");
@@ -55,15 +58,17 @@ struct Decoder {
     }
     uint8_t channel(unsigned index,unsigned axis,unsigned luma) const {
         // The native game's first fight palette environment: channel offsets 64,
-        // slopes 37 and gains 128. Special skin/gi curves and high-luma colours
-        // come from ROM; the destination renderer supplies the changing lighting.
+        // slopes 37 and gains 128. i960 754..9e8 selects each native fighter's
+        // skin/costume curves and high-luma eye, mouth and hair colours. Reading
+        // actor zero's tables for everyone turns Shun's white beard red/black.
+        // The destination renderer supplies the changing lighting.
         unsigned value=0;
         if(index==28 || index==29) {
-            const int raw=half(Main,0x101000+(index-28)*0x180+axis*0x80+luma*2);
+            const int raw=half(Main,0x101000+native_actor*0x300+(index-28)*0x180+axis*0x80+luma*2);
             value=unsigned(std::max(raw-52,0));
         } else if(index<28 && luma>=48) {
             if(index>6)throw std::runtime_error("unsupported VF2 high-luma palette channel");
-            const int raw=half(Main,0x105800+index*0x60+axis*0x20+(luma-48)*2);
+            const int raw=half(Main,0x105800+native_actor*0x2a0+index*0x60+axis*0x20+(luma-48)*2);
             value=unsigned(std::max(raw-52,0));
         } else if(index<28 && index && luma) {
             value=64+((luma*(37*index*28/18))>>8);
@@ -208,6 +213,7 @@ struct Decoder {
         size_t at=size_t(object&0x7fffff)*4;
         Point old0=vertex(at),old1=vertex(at+12); at+=24;
         Mesh out;bool ended=false;
+        std::map<std::array<Point,3>,unsigned> head_layers;
         for(unsigned i=0;i<4096;++i,at+=40) {
             const uint32_t attr=word(Polygons,at),type=attr&3,link=(attr>>8)&3;
             if(!type) {ended=true;break;}
@@ -229,15 +235,29 @@ struct Decoder {
                 // by 0.41 destination units, leaving the strip itself intact.
                 const Point normal=vertex(at+4);
                 const unsigned palette=(h[3]>>6)&1023;
-                const bool detail=descriptor==0x19c && (h[0]&0x2000) && (palette==1 || palette==2);
-                auto surface=[&](Point p) {
-                    if(detail)
-                        for(unsigned k=0;k<3;++k)p[k]-=.0002f*normal[k];
-                    return p;
+                const bool detail=descriptor==head_descriptor && (h[0]&0x2000) &&
+                                  (native_actor!=0 || palette==1 || palette==2);
+                const unsigned limit=detail && (palette==1 || palette==2) ? 5 : subdivision;
+                auto emit=[&](Point p,Point q,Point r,const UV &up,const UV &uq,const UV &ur) {
+                    unsigned layer=0;
+                    if(native_actor!=0 && descriptor==head_descriptor) {
+                        std::array<Point,3> key={p,q,r};std::sort(key.begin(),key.end());
+                        layer=head_layers[key]++;
+                    }
+                    // Native painter order includes opaque coplanar overlays,
+                    // notably Kage's mask over his skin and mouth. Keep their
+                    // exact source order when RGB groups enter a depth buffer.
+                    // Kage's opaque mask (palette 92) is emitted after the
+                    // mouth and skin with some different triangulation. Its
+                    // entire surface must remain above those two layers.
+                    if(native_actor==3 && descriptor==head_descriptor && palette==92)
+                        layer=std::max(layer,3u);
+                    const float lift=.0002f*std::max(layer,unsigned(detail));
+                    for(unsigned k=0;k<3;++k) {p[k]-=lift*normal[k];q[k]-=lift*normal[k];r[k]-=lift*normal[k];}
+                    face(out,h,p,q,r,up,uq,ur,0,limit,detail);
                 };
-                const unsigned limit=detail ? 5 : subdivision;
-                face(out,h,surface(old1),surface(old0),surface(a),uv[0],uv[1],uv[2],0,limit,detail);
-                if(type&1)face(out,h,surface(old1),surface(a),surface(b),uv[0],uv[2],uv[3],0,limit,detail);
+                emit(old1,old0,a,uv[0],uv[1],uv[2]);
+                if(type&1)emit(old1,a,b,uv[0],uv[2],uv[3]);
             }
             if(link==0 || link==2) {old0=a;old1=b;}
             else if(link==1)old1=a;
@@ -248,8 +268,9 @@ struct Decoder {
     }
 };
 }
-bool load(const std::string &path,vf1_models::Assets &out,std::string &error) {
+bool load(const std::string &path,vf1_models::Assets &out,std::string &error,unsigned fighter) {
     try {
+        if(fighter>=10)throw std::runtime_error("unsupported VF2 fighter");
         rom_zip::zip z;if(!z.open(path))throw std::runtime_error("cannot read VF2 ZIP");
         Decoder d;
         d.regions[Main].resize(0x1000000);d.regions[Polygons].resize(0xc00000);
@@ -262,14 +283,32 @@ bool load(const std::string &path,vf1_models::Assets &out,std::string &error) {
             auto &dest=d.regions[rom.region];
             for(size_t i=0;i<raw.size();i+=2)memcpy(dest.data()+rom.offset+2*i,raw.data()+i,2);
         }
-        d.sheet=detail::TextureDecoder(d.regions[Main]).akiraSheet();
+        // Actual VF2 2.1 P1 records in the shared select order. Pai's default
+        // body comes from the second costume bank; its native actor remains 6.
+        constexpr unsigned records[]={0xec8,0x4858,0x1d08,0x27b8,0x2098,0x1978,0x15e8,0x1258,0x2b48,0x2f68};
+        constexpr unsigned native_actors[]={0,6,4,7,5,3,2,1,8,10};
+        const unsigned record=records[fighter];
+        d.native_actor=native_actors[fighter];
+        d.sheet=detail::TextureDecoder(d.regions[Main]).fighterSheet(d.word(Main,record+0x370));
         vf1_models::Assets next;
-        constexpr unsigned body[]={0x996,0x994,0x19e,0x1a6,0x19d,0x1a5,0x1a1,0x19b,0x198,0x1a0,0x19a,0x197,0x19c};
+        constexpr unsigned body_slots[]={1,9,3,4,6,7,10,11,12,13,14,15,2};
+        d.head_descriptor=d.word(Main,record+2*4);
         // Bound cached geometry: the head gets three subdivision levels (five
         // for its eye/mouth cutouts), body surfaces two, and cached hands one.
-        for(size_t i=0;i<next.parts.size();++i)next.parts[i]=d.part(body[i],i==size_t(vf1_models::Part::Head)?3:2);
+        for(size_t i=0;i<next.parts.size();++i)
+            next.parts[i]=d.part(d.word(Main,record+body_slots[i]*4),i==size_t(vf1_models::Part::Head)?3:2);
         for(unsigned hand=0;hand<2;++hand)for(unsigned pose=0;pose<32;++pose)
-            next.hands[hand][pose]=d.part(d.word(Main,(hand?0x1088:0xf08)+(31-pose)*4),1);
+            next.hands[hand][pose]=d.part(d.word(Main,record+0x40+hand*0x180+(31-pose)*4),1);
+        const uint32_t skeleton=d.word(Main,record+0x344);
+        if(skeleton<0x02000000)throw std::runtime_error("invalid VF2 skeleton pointer");
+        // The native table starts with torso/root offset 0, followed by neck,
+        // shoulders and limb lengths, matching the shared VF1 joint indexing.
+        for(unsigned slot=0;slot<15;++slot)for(unsigned axis=0;axis<3;++axis) {
+            const auto bits=d.word(Main,skeleton-0x02000000+slot*12+axis*4);
+            float value;memcpy(&value,&bits,4);
+            if(!std::isfinite(value)||std::abs(value)>2)throw std::runtime_error("invalid VF2 skeleton joint");
+            next.source_joints[slot][axis]=value;
+        }
         auto strand=[&](vf1_models::Strand &s,uint8_t bone,size_t anchor,size_t descriptors,size_t count) {
             s.bone=bone;
             for(unsigned axis=0;axis<3;++axis)s.anchor[axis]=d.scalar(anchor+axis*4);
@@ -280,22 +319,89 @@ bool load(const std::string &path,vf1_models::Assets &out,std::string &error) {
                 if(s.lengths[i]<=0)throw std::runtime_error("invalid VF2 accessory segment length");
             }
         };
-        strand(next.strands[0],2,0x67bd8,0x67c00,5);
-        next.extra_head_ribbons.resize(1);
-        strand(next.extra_head_ribbons[0],2,0x67bd8,0x67d6c,5);
-        strand(next.strands[1],1,0x67a98,0x67ac0,2);
-        strand(next.strands[2],1,0x67b38,0x67b60,2);
+        if(fighter==0) {
+            strand(next.strands[0],2,0x67bd8,0x67c00,5);
+            next.extra_head_ribbons.resize(1);
+            strand(next.extra_head_ribbons[0],2,0x67bd8,0x67d6c,5);
+            strand(next.strands[1],1,0x67a98,0x67ac0,2);
+            strand(next.strands[2],1,0x67b38,0x67b60,2);
+        } else {
+            // VF2's bounded accessory bytecode: 4 starts a chain, 5 appends
+            // a segment. Commands 1..3 configure native cloth simulation;
+            // the destination uses its own animation and these source meshes.
+            size_t at=d.word(CPU,0x658a4+native_actors[fighter]*4);
+            std::vector<vf1_models::Strand> chains;
+            vf1_models::Strand current;
+            current.segments.clear();current.lengths.clear();
+            for(auto &s:next.strands) {s.segments.clear();s.lengths.clear();}
+            bool attached=false,ended=false;
+            auto finish=[&] {
+                if(!current.segments.empty())chains.push_back(std::move(current));
+                current={};current.segments.clear();current.lengths.clear();
+            };
+            constexpr size_t command_bytes[]={4,36,64,12,24,68};
+            for(unsigned command=0;command<128;++command) {
+                const unsigned op=d.word(CPU,at);
+                if(!op) {finish();ended=true;break;}
+                if(op>5)throw std::runtime_error("unknown VF2 accessory command");
+                if(op==4) {
+                    finish();
+                    const auto bone=d.word(CPU,at+8);
+                    if(bone) {
+                        if(bone!=1 && bone!=2 && bone!=9)throw std::runtime_error("unsupported VF2 accessory bone");
+                        current.bone=uint8_t(bone);
+                        for(unsigned axis=0;axis<3;++axis)current.anchor[axis]=d.scalar(at+12+axis*4);
+                        attached=true;
+                    } else {
+                        if(chains.empty())throw std::runtime_error("VF2 accessory has no parent attachment");
+                        current.bone=chains.back().bone;current.anchor=chains.back().anchor;attached=true;
+                    }
+                } else if(op==5) {
+                    if(!attached || current.segments.size()>=16)throw std::runtime_error("invalid VF2 accessory chain");
+                    current.segments.push_back(d.part(d.word(CPU,at+28),3));
+                    const auto length=d.scalar(at+40);
+                    if(length<=0)throw std::runtime_error("invalid VF2 accessory length");
+                    current.lengths.push_back(length);
+                    // Jacky's fifteen single-segment tufts have upward native
+                    // force (0,+.016,0), unlike hanging braids. i960 651bc
+                    // adds this to transformed gravity before normalizing the
+                    // segment direction. Keep their upright rigid rest shape;
+                    // VF3 head-local +Z points up after the source Z reflection.
+                    if(fighter==7 && current.bone==2 && d.scalar(at+44)==0 &&
+                       d.scalar(at+48)>0 && d.scalar(at+52)==0)
+                        current.rest_direction={0,0,1};
+                }
+                at+=command_bytes[op];
+            }
+            if(!ended || chains.size()>32)throw std::runtime_error("unterminated VF2 accessory commands");
+            unsigned belts=0;
+            for(auto &chain:chains) {
+                if(chain.bone==2) {
+                    if(next.strands[0].segments.empty())next.strands[0]=std::move(chain);
+                    else next.extra_head_ribbons.push_back(std::move(chain));
+                } else if(belts<2)next.strands[1+belts++]=std::move(chain);
+                else next.extra_strands.push_back(std::move(chain));
+            }
+        }
         // Original manga-style select icon. The six-by-eleven tile image is
         // embedded in a 62-column map; graphics and BGR555 palette are raw ROM.
         auto &portrait=next.portrait;
         portrait.width=48;portrait.height=88;portrait.pixels.resize(48*88);
+        size_t graphics=0x84f4d0;
+        for(unsigned i=0;i<fighter;++i) {
+            const auto count=d.word(Main,graphics);
+            if(!count || count>128)throw std::runtime_error("invalid VF2 portrait graphics block");
+            graphics+=4+count*32;
+        }
+        const auto tile_count=d.word(Main,graphics),first_tile=0x2a80+fighter*0x80;
+        if(!tile_count || tile_count>128)throw std::runtime_error("invalid VF2 portrait tile count");
         for(unsigned y=0;y<88;++y)for(unsigned x=0;x<48;++x) {
-            const unsigned entry=d.half(Main,0xa712fc+(y/8)*124+(x/8)*2);
-            if(entry<0x2a80 || entry>0x2abe)throw std::runtime_error("invalid VF2 Akira portrait tile");
-            const size_t row=0x84f4d4+(entry-0x2a80)*32+(y%8)*4;
+            const unsigned entry=d.half(Main,0xa712fc+fighter*12+(y/8)*124+(x/8)*2);
+            if(entry<first_tile || entry>=first_tile+tile_count)throw std::runtime_error("invalid VF2 fighter portrait tile");
+            const size_t row=graphics+4+(entry-first_tile)*32+(y%8)*4;
             const uint32_t packed=(uint32_t(d.half(Main,row))<<16)|d.half(Main,row+2);
             const unsigned pen=(packed>>(28-4*(x%8)))&15;
-            const auto bgr=d.half(Main,0x800ee0+pen*2);
+            const auto bgr=d.half(Main,0x800ee0+fighter*32+pen*2);
             uint32_t rgb=0xff000000;
             for(unsigned axis=0;axis<3;++axis) {
                 const unsigned value=(bgr>>(axis*5))&31;

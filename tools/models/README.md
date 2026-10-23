@@ -1,7 +1,9 @@
-# VF1 / VF2 Akira appearance prototype
+# VF1 / VF2 roster appearances
 
-Highlight Akira on the character-select screen. Each **Up press** cycles
-**VF3 → VF1 → VF2 → VF3**; held Up advances only once. **Down** returns to VF3.
+Highlight **Akira, Pai, Lau, Wolf, Jeffry, Kage, Sarah or Jacky** on the
+character-select screen. Each **Up press** cycles **VF3 → VF1 → VF2 → VF3**.
+**Shun and Lion** cycle **VF3 → VF2 → VF3**; Aoi and Taka stay native VF3.
+Held Up advances only once. **Down** returns to VF3.
 Confirm normally. Each human player chooses independently, and each new selection
 starts with VF3. Native Down navigation to VF3's lower roster row remains
 available when VF3 is selected. Fighting controls are unchanged.
@@ -16,21 +18,74 @@ No ROMs or decoded meshes/textures are included in the repository or application
 
 VF3 still supplies the skeleton, moves, collision and shadows. Each source has
 32 native hand poses per side, selected approximately from VF3 finger curl.
-Headband ribbons use the source geometry and follow VF3 tail directions; VF2's
+Akira headband ribbons use the source geometry and follow VF3 tail directions; VF2's
 two five-segment ribbons are fitted to VF3's three cloth bones. VF1 belt tails
 follow the pelvis; VF2's two two-segment belt tails follow the torso, without
 separate cloth physics. Faces use neutral source poses, without VF3 expressions.
-Both VF3 outfits use the same source game's P1 Akira geometry and palette.
+Other fighters currently use rigid source hair/accessory chains, without their
+original cloth physics. VF2 Jacky's tufts use the upward rest direction indicated
+by their native accessory force, rather than the hanging-braid fallback. Both VF3 outfits use the source game's P1 geometry and palette.
 Unknown/ambiguous skeleton layouts stay original. Visible, recognised limbs are
 replaced even when the camera culls the feet in a victory close-up. The selection
-screen changes both the 3D head and the original ROM portrait in the Akira roster
+screen changes both the 3D head and the original ROM portrait in the corresponding roster
 cell, and shows the chosen appearance in a label. The tall source portraits are
 fitted into VF3's landscape cell without stretching. Physical-device rendering and all stages/animations
 have not been exhaustively verified.
 
-## Implementation and evidence
+## Roster extension
 
-- `src/host/vf1_models.cpp` decodes 13 size/CRC-checked ROM members. Its 13 semantic
+The shared canonical order is Akira, Pai, Lau, Wolf, Jeffry, Kage, Sarah, Jacky,
+Shun, Lion. `src/host/fighter_roster.h` maps these to revision D cursor/actor IDs
+`0,6,4,7,5,3,2,1,8,10`; an alternate outfit adds 13. VF1 provides the first eight
+entries and VF2 all ten. The two companion decoders accept this index as their
+optional fourth `load` argument and validate ROM member sizes/CRCs at runtime.
+No decoded assets are generated during the build.
+
+`src/video/fighter_layouts.h` records both VF3 outfits' exact source nodes and
+joint dimensions from local native runtime captures. The generic adapter fits
+source limb lengths and torso joints to these skeletons; original face, hand and
+accessory meshes are removed only through the matching outfit's explicit node
+set. Shadow nodes are excluded. Akira retains its previously verified adapter.
+`fighter_appearances.h` loads other fighters on demand and retains two converted
+models per companion, enough for both players without decoding the whole roster.
+Changing fighter clears that player's previous choice; the post-KO choice remains
+bound to the same actor pair through the result sequence.
+
+The source decoders were checked for all 8 VF1 and 10 VF2 fighters, including
+hands, source joints, portraits and accessory chains. VF2's 180,224 texture blocks
+per fighter matched native neutral-state uploads. Local evidence resides under
+`build/vf1-roster`, `build/vf2-roster-probe`, `build/roster-selection` and
+`build/roster-layouts`; ROM-derived captures remain ignored.
+
+Run the optional local-ROM roster regressions with:
+
+```sh
+make -j4 build/bin/akira-selection-test build/bin/fighter-appearances-test build/bin/roster-check
+build/bin/akira-selection-test
+build/bin/fighter-appearances-test /path/to/vf.zip /path/to/vf2.zip
+build/bin/roster-check /path/to/vf3.zip /path/to/vf.zip /path/to/vf2.zip build/roster-render
+```
+
+`roster-check` captures both selection previews and three fight poses for all
+fighters (an optional final index selects one). It checks independent outfit
+masks, original-face removal, shadow preservation, unchanged scene transforms
+and emulated RAM, and disabled/unknown-layout guards. The cache test covers
+scene lifetime after eviction, reload fidelity, failed replacement ROMs and
+mixed VF1/VF2 player ownership. All 90 source/frame combinations passed. Extended
+native pose audits also cover changing detail levels and reaction-face node sets.
+An actual Pai VF2 selection/defeat run retained the appearance for 165 sampled
+inactive-player result scenes and cleared it when attract mode began. Pai victory
+close-ups and progression into the next fight also retained the imported model.
+The final macOS Metal app was exercised with a VF1/VF2 Pai mirror match and a
+VF2 Kage selection/fight; the iOS simulator displayed VF2 Shun after one Up press.
+macOS, simulator and unsigned device apps were incrementally compiled/linked
+using the recorded Xcode commands and cached dependencies. Logs/screenshots are
+under `build/roster-selection`; the device build has not been tested on hardware.
+No test ROM or image is committed.
+
+## Akira implementation and evidence
+
+- `src/host/vf1_models.cpp` decodes size/CRC-checked ROM members. Akira's 13 semantic
   parts contain 3,452 triangles, with no VF2-specific scaling. The decoder and ZIP
   reader are adapted from `hang-h/vf2-recomp` under MIT.
 - `src/host/vf2_models.cpp` reads size/CRC-checked VF2 ROMs, decodes the
@@ -51,15 +106,26 @@ have not been exhaustively verified.
   53,748 triangles and each hand pose has 760 triangles.
   These cutouts are coplanar with skin in the original head. Model 2's painter
   order preserves them, but Real3D's depth buffer and colour batching do not.
-  Only head descriptor `0x19c`, alpha-cutout palettes 1/2 are lifted outward by
-  0.0002 source units (0.4096 destination units), opposite the inward ROM normal.
-  Skin, hair, limbs and VF1 geometry retain their existing coordinates.
+  Akira's existing head descriptor `0x19c`, alpha-cutout palettes 1/2 are lifted
+  outward by 0.0002 source units (0.4096 destination units), opposite the inward
+  ROM normal. Other fighters retain source painter order for repeated head
+  triangles using the same offset per layer. All head alpha overlays use
+  filtered cutout coverage; eyes/mouth retain their finer subdivision budget.
+  Kage's opaque palette-92 mask comes after both skin and mouth, so it receives
+  three offset layers even where its triangulation differs. This removes skin
+  and mouth showing through the mask without altering limbs or VF1 geometry.
   The imported VF2 head still uses its neutral expression; the game's changing
   expression aliases are not yet mapped to VF3 facial animation.
   Fine texture edges are therefore approximate. Colours use ROM luma/colour
   curves with a fixed native first-fight palette environment (offset 64, slope
   37, gain 128 and special-curve LUT offset -52), followed by VF3 lighting;
   dynamic VF2 stage colour translation is not reproduced.
+  Each fighter selects its own native skin/costume and high-luma facial/hair
+  curves: main-data `0x101000 + native_actor*0x300` and
+  `0x105800 + native_actor*0x2a0`, respectively (i960 `0x754..0x9e8`).
+  All 720 channel entries per fighter matched the ten native runtime captures
+  exactly. These tables are essential for Shun's white beard and Kage's mask;
+  sharing Akira's curves would incorrectly use his mouth and gi colours.
 - `src/video/vf2_akira.cpp` loads the VF2 source into the shared adapter with
   uniform 2048 scaling and reversed local Z. VF2's 0.25 arm and 0.39/0.44 leg
   segments match VF3's 512 and 798.72/901.12 lengths. Distinct mesh cache keys

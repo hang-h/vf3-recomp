@@ -1,4 +1,4 @@
-// VF1 Akira source meshes, decoded from the user's own vf.zip.
+// VF1 roster source meshes, decoded from the user's own vf.zip.
 // Coordinates remain in VF1 part-local space; destination fitting belongs to the renderer.
 #pragma once
 #include <array>
@@ -20,6 +20,9 @@ using Mesh = std::vector<Triangle>;
 struct Strand {
     uint8_t bone = 0;
     std::array<float, 3> anchor{};
+    // Rigid rest direction in the destination's head-local coordinates.
+    // Most hair hangs down; source-driven upright tufts override this basis.
+    std::array<float, 3> rest_direction{0,0,-1};
     std::vector<Mesh> segments = std::vector<Mesh>(3);
     std::vector<float> lengths = std::vector<float>(3);
 };
@@ -29,14 +32,17 @@ struct Portrait {
     bool available() const { return width && height && pixels.size() == size_t(width) * height; }
 };
 struct Assets {
+    // Original skeleton offsets (slots 0..15), used to fit each fighter's limbs.
+    std::array<std::array<float,3>,16> source_joints{};
     std::array<Mesh, size_t(Part::Count)> parts;
     std::array<std::array<Mesh, 32>, 2> hands; // A (+0x22), B (+0x2e), closed to open
     Mesh belt_knot;
     std::array<Strand, 3> strands; // headband ribbon, two belt tails
     std::vector<Strand> extra_head_ribbons; // VF2 has a second, five-segment ribbon
+    std::vector<Strand> extra_strands; // Other torso/pelvis accessories in the roster
     Portrait portrait;
 };
 // Size/CRC-validated, no extracted files or cache; failure leaves out unchanged.
 // Only the original P1 Akira neutral face is decoded here, with no VF2 fitting.
-bool load(const std::string &zip, Assets &out, std::string &error);
+bool load(const std::string &zip, Assets &out, std::string &error, unsigned fighter=0);
 }

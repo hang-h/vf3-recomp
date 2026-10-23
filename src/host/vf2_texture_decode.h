@@ -14,7 +14,7 @@ namespace vf2_models::detail {
 class TextureDecoder {
     const std::vector<std::uint8_t>& rom;
     static constexpr std::uint32_t base = 0x02000000;
-    [[noreturn]] static void bad() { throw std::runtime_error("invalid VF2 Akira texture stream"); }
+    [[noreturn]] static void bad() { throw std::runtime_error("invalid VF2 fighter texture stream"); }
     std::uint32_t word(std::uint32_t address) const {
         if (address < base || std::uint64_t(address - base) + 4 > rom.size()) bad();
         const auto* p = rom.data() + address - base;
@@ -47,7 +47,7 @@ class TextureDecoder {
         for (auto& token : tree) token = bits.get(treeBits);
         std::vector<std::array<std::uint32_t, 2>> custom(customCount);
         for (auto& pair : custom) { pair[0] = bits.get(16); pair[1] = bits.get(4); }
-        // Group 2 occupies the first 12 entries in the ROM placement table
+        // Fighter sheets occupy the first 12 entries in the ROM placement table
         // 0x4c120: four rows of 256 pixels, then the following column.
         const auto tile = (placement & 0xffff) >> 1;
         if ((placement & 1) || tile >= 16) bad();
@@ -122,27 +122,33 @@ class TextureDecoder {
     }
 public:
     explicit TextureDecoder(const std::vector<std::uint8_t>& data) : rom(data) {}
-    // Physical sheet: 1024 x 2048 texels, packed into 2x2 blocks. Akira's
-    // three raw and nine compressed base textures (groups 1/2) use sheet 1. No game startup,
+    // Physical sheet: 1024 x 2048 texels, packed into 2x2 blocks. Each fighter's
+    // three raw and nine compressed base textures use sheet 1. No game startup,
     // emulated machine, extracted texture file, or precomputed ROM data needed.
-    std::vector<std::uint16_t> akiraSheet() const {
+    std::vector<std::uint16_t> fighterSheet(unsigned firstGroup) const {
+        if (firstGroup < 1 || firstGroup > 19 || !(firstGroup & 1)) bad();
         const auto groups = word(0x0230000c);
         std::vector<std::uint16_t> sheet(0x80000, 0);
-        for (unsigned group = 1; group <= 2; ++group) {
+        for (unsigned group = firstGroup; group <= firstGroup + 1; ++group) {
             const auto sources = word(groups + group * 4);
             const auto sourceEnd = word(groups + (group + 1) * 4);
             const auto placements = word(word(0x02300008) + word(sources) * 4);
-            const auto count = group == 1 ? 3u : 9u;
+            const auto count = group == firstGroup ? 3u : 9u;
             if (word(placements) != count) bad();
             for (unsigned i = 0; i < count; ++i) {
                 const auto start = word(sources + 4 + i * 4);
-                const auto end = i + 1 < count ? word(sources + 8 + i * 4) : sourceEnd;
+                auto end = i + 1 < count ? word(sources + 8 + i * 4) : sourceEnd;
+                // Some character pairs cross ROM banks: the following group's
+                // address can be lower. Cursor/row/tree limits still bound the
+                // final stream against the validated source region.
+                if (end <= start) end = base + std::uint32_t(rom.size());
                 const auto destination = word(placements + 4 + i * 4);
-                if (group == 1) raw(start, end, destination, sheet);
+                if (group == firstGroup) raw(start, end, destination, sheet);
                 else decode(start, end, destination, sheet);
             }
         }
         return sheet;
     }
+    std::vector<std::uint16_t> akiraSheet() const { return fighterSheet(1); }
 };
 } // namespace vf2_models::detail

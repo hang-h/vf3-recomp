@@ -12,7 +12,7 @@ using mesh = Mesh;
 
 // MAME vf's ROM_LOAD, ROM_LOAD16_BYTE and ROM_LOAD32_WORD lanes. Only the
 // character records/descriptors, colour tables and polygons are needed.
-enum { RECORDS, DESCRIPTORS, COLOURS, POLYGONS, REGION_COUNT };
+enum { RECORDS, DESCRIPTORS, COLOURS, POLYGONS, GRAPHICS, REGION_COUNT };
 struct rom { const char *name; uint32_t crc; int region; size_t offset, size, unit, stride; };
 constexpr rom ROMS[] = {
     {"epr-16080.4",  0x3662e1a5, RECORDS, 0, 0x20000, 1, 1},
@@ -20,6 +20,8 @@ constexpr rom ROMS[] = {
     {"epr-16083.15", 0xd12c77f8, DESCRIPTORS, 1, 0x80000, 1, 2},
     {"mpr-16090.12", 0x90c76831, COLOURS, 0, 0x80000, 1, 2},
     {"mpr-16091.13", 0x53115448, COLOURS, 1, 0x80000, 1, 2},
+    {"mpr-16084.6",  0x483f453b, GRAPHICS, 0, 0x80000, 1, 2},
+    {"mpr-16085.7",  0x5fa01277, GRAPHICS, 1, 0x80000, 1, 2},
     {"mpr-16096.26", 0xa92b0bf3, POLYGONS, 0x000000, 0x200000, 2, 4},
     {"mpr-16097.27", 0x0232955a, POLYGONS, 0x000002, 0x200000, 2, 4},
     {"mpr-16098.28", 0xcf2e1b84, POLYGONS, 0x400000, 0x200000, 2, 4},
@@ -43,6 +45,8 @@ struct decoder {
     {
         if (a >= 0xfc0000 && a < 0xfe0000) return bytes(RECORDS, a - 0xfc0000, count);
         if (a >= 0x200000 && a < 0x300000) return bytes(DESCRIPTORS, a - 0x200000, count);
+        if (a >= 0x1000000 && a < 0x1100000) return bytes(GRAPHICS, a - 0x1000000, count);
+        if (a >= 0x1300000 && a < 0x1400000) return bytes(COLOURS, a - 0x1300000, count);
         throw std::runtime_error("unsupported character record address");
     }
     uint32_t word(uint32_t a) const { return rom_zip::le32(main_bytes(a, 4)); }
@@ -107,9 +111,10 @@ struct decoder {
 };
 }
 
-bool load(const std::string &path, Assets &out, std::string &error)
+bool load(const std::string &path, Assets &out, std::string &error, unsigned fighter)
 {
     try {
+        if (fighter >= 8) throw std::runtime_error("fighter is not in the VF1 roster");
         rom_zip::zip z;
         if (!z.open(path)) throw std::runtime_error("cannot read ZIP");
         decoder d;
@@ -117,6 +122,7 @@ bool load(const std::string &path, Assets &out, std::string &error)
         d.regions[DESCRIPTORS].resize(0x100000);
         d.regions[COLOURS].resize(0x100000);
         d.regions[POLYGONS].resize(0x1000000);
+        d.regions[GRAPHICS].resize(0x100000);
         std::vector<uint8_t> raw;
         for (const auto &ro : ROMS) {
             const rom_zip::entry *e = nullptr;
@@ -128,7 +134,11 @@ bool load(const std::string &path, Assets &out, std::string &error)
             for (size_t i = 0; i < raw.size(); i += ro.unit)
                 memcpy(dest.data() + ro.offset + (i / ro.unit) * ro.stride, raw.data() + i, ro.unit);
         }
-        constexpr uint32_t record = 0xfd4f99; // VF1 P1 Akira
+        // Original P1 records, in the shared roster order (Akira through Jacky).
+        constexpr uint32_t records[] = {
+            0xfd4f99, 0xfd3987, 0xfd2f45, 0xfd3525, 0xfd3b05, 0xfd3231, 0xfd3811, 0xfd49b9
+        };
+        const uint32_t record = records[fighter];
         struct binding { Part part; uint32_t offset; };
         constexpr binding body[] = {
             {Part::Torso, 0x12}, {Part::Pelvis, 0x32},
@@ -138,69 +148,118 @@ bool load(const std::string &path, Assets &out, std::string &error)
             {Part::UpperLegB, 0x42}, {Part::LowerLegB, 0x46}, {Part::FootB, 0x4a},
         };
         Assets prepared;
+        const auto byte = [&](uint32_t at) { return *d.main_bytes(at, 1); };
+        const auto real = [&](uint32_t at) {
+            const uint32_t bits = d.word(at);
+            float value; memcpy(&value, &bits, sizeof value);
+            if (!std::isfinite(value) || std::abs(value) > 1000000)
+                throw std::runtime_error("invalid source attachment coordinate");
+            return value;
+        };
+        const uint32_t skeleton = d.word(record);
+        for (size_t bone = 0; bone < prepared.source_joints.size(); ++bone)
+            for (unsigned axis = 0; axis < 3; ++axis)
+                prepared.source_joints[bone][axis] = real(skeleton + uint32_t(bone) * 12 + axis * 4);
         for (const auto &b : body)
             d.part(prepared.parts[size_t(b.part)], d.word(record + b.offset));
         // Four fixed parts, paired eye/brow lists, and a mouth list.
         // Neutral VF1 appearance used by the existing VF2 integration.
         const uint32_t lists = d.word(record + 0x72);
-        const unsigned frames[] = {0, 0, 0, 0, 0, 1, 0, 1, 1};
+        const unsigned frames[] = {0, 0, 0, 0, 0, 1, 0, 1, fighter == 5 ? 0u : 1u};
         auto &head = prepared.parts[size_t(Part::Head)];
-        for (unsigned part = 0; part < 9; ++part)
-            d.part(head, d.word(d.word(lists + 4 * part) + 4 * frames[part]));
+        for (unsigned part = 0; part < 9; ++part) {
+            // Kage has no separate brows; his mouth frame 0 is the blue mask.
+            const uint32_t list = d.word(lists + 4 * part);
+            if (list) d.part(head, d.word(list + 4 * frames[part]));
+        }
+        if (head.empty()) throw std::runtime_error("missing fighter head");
         for (size_t side = 0; side < 2; ++side) {
             const uint32_t table = d.word(record + (side ? 0x5e : 0x62));
             for (size_t pose = 0; pose < 32; ++pose)
                 d.part(prepared.hands[side][pose], d.word(table + uint32_t(pose) * 4));
         }
         d.part(prepared.belt_knot, d.word(record + 0x0e));
-        // Original Akira's slot-keyed dynamic accessories: one head ribbon
-        // and two belt tails. Decode source anchors and segment lengths too.
-        if (*d.main_bytes(0xfda944, 1) != 0x16)
-            throw std::runtime_error("unsupported Akira strand slot");
-        const uint32_t strands = d.word(0xfda945);
-        uint32_t cursor = strands + 4;
-        const auto byte = [&](uint32_t at) { return *d.main_bytes(at, 1); };
-        const auto real = [&](uint32_t at) {
-            const uint32_t bits = d.word(at);
-            float value; memcpy(&value, &bits, sizeof value);
-            if (!std::isfinite(value) || std::abs(value) > 1000000)
-                throw std::runtime_error("invalid strand coordinate");
-            return value;
-        };
-        if (byte(cursor++) != prepared.strands.size())
-            throw std::runtime_error("unsupported Akira strand group count");
-        for (auto &strand : prepared.strands) {
-            cursor += 0x46; // original solver's group parameters
-            if (byte(cursor++) != 1)
-                throw std::runtime_error("unsupported Akira strand chain count");
-            strand.bone = byte(cursor++);
-            for (float &axis : strand.anchor) { axis = real(cursor); cursor += 4; }
-            if (byte(cursor++) != strand.segments.size())
-                throw std::runtime_error("unsupported Akira strand segment count");
-            for (size_t segment = 0; segment < strand.segments.size(); ++segment) {
-                d.part(strand.segments[segment], d.word(cursor));
-                const float length = real(cursor + 4);
-                if (!(length > 0 && length < 1)) throw std::runtime_error("invalid strand length");
-                strand.lengths[segment] = length;
-                cursor += 0x18; // descriptor, length, spring parameter, initial world position
+        // Native dynamic accessories are keyed by costume slot, not record.
+        // Keep the first head chain and two pelvis chains in the legacy slots;
+        // braids/dreadlocks beyond the first head chain use the variable list.
+        unsigned slot = 26;
+        for (unsigned i = 0; i < 26; ++i)
+            if (d.word(0xfd2e8f + 4 * i) == record) { slot = i; break; }
+        if (slot == 26) throw std::runtime_error("missing VF1 costume slot");
+        uint32_t strands = 0;
+        bool terminated = false;
+        for (unsigned i = 0; i < 15; ++i) {
+            const uint32_t at = 0xfda917 + 5 * i;
+            if (byte(at) == 255) { terminated = true; break; }
+            if (byte(at) == slot) strands = d.word(at + 1);
+        }
+        if (!terminated) throw std::runtime_error("unterminated VF1 strand list");
+        unsigned head_chains = 0, belt_chains = 0, total_segments = 0;
+        if (strands) {
+            uint32_t cursor = strands + 4;
+            const unsigned groups = byte(cursor++);
+            if (!groups || groups > 8) throw std::runtime_error("invalid VF1 strand group count");
+            for (unsigned group = 0; group < groups; ++group) {
+                cursor += 0x46; // original solver's group parameters
+                const unsigned chains = byte(cursor++);
+                if (!chains || chains > 8) throw std::runtime_error("invalid VF1 strand chain count");
+                for (unsigned chain = 0; chain < chains; ++chain) {
+                    Strand strand;
+                    strand.bone = byte(cursor++);
+                    for (float &axis : strand.anchor) { axis = real(cursor); cursor += 4; }
+                    const unsigned count = byte(cursor++);
+                    total_segments += count;
+                    if (!count || count > 16 || total_segments > 64)
+                        throw std::runtime_error("invalid VF1 strand segment count");
+                    strand.segments.resize(count); strand.lengths.resize(count);
+                    for (unsigned segment = 0; segment < count; ++segment) {
+                        d.part(strand.segments[segment], d.word(cursor));
+                        const float length = real(cursor + 4);
+                        if (!(length > 0 && length < 1)) throw std::runtime_error("invalid strand length");
+                        strand.lengths[segment] = length;
+                        // Native Kage P1 belt polygons use a 0.1 TGP scale.
+                        // Their anchors and segment lengths are already metres.
+                        if (fighter == 5 && strand.bone == 9)
+                            for (auto &triangle : strand.segments[segment])
+                                for (auto &point : triangle.points) for (float &axis : point) axis *= .1f;
+                        cursor += 0x18; // descriptor, length, spring parameter, initial world position
+                    }
+                    if (strand.bone == 2) {
+                        if (head_chains++) prepared.extra_head_ribbons.push_back(std::move(strand));
+                        else prepared.strands[0] = std::move(strand);
+                    } else if (strand.bone == 9 && belt_chains < 2) {
+                        prepared.strands[1 + belt_chains++] = std::move(strand);
+                    } else throw std::runtime_error("unsupported VF1 strand attachment");
+                }
             }
         }
-        if (prepared.strands[0].bone != 2 || prepared.strands[1].bone != 9 || prepared.strands[2].bone != 9)
-            throw std::runtime_error("unsupported Akira strand attachments");
-        // Original select artwork: seven by eight 4bpp tiles, with the updated
-        // Akira byte-indexed map and its palette in the descriptor ROM.
-        constexpr uint32_t map=0x2ff5ec,graphics=0x2fef8c,palette=0x2ff5cc;
-        if(d.word(map)!=0xb080 || d.word(map+4)!=8 || d.word(map+8)!=7)
-            throw std::runtime_error("unsupported Akira portrait map");
+        // Original 7x8-tile select artwork. Akira's updated icon uses byte
+        // indices; the remaining portraits use word indices and graphics bank 0.
+        struct icon_source { uint32_t map, graphics, palette; unsigned first, count; };
+        constexpr icon_source icons[] = {
+            {0x2ff5ec, 0x2fef8c, 0x2ff5cc, 0,      50},
+            {0x13d1997,0x107f704,0x1082b44,0x2480,49},
+            {0x13d191b,0x107f0c0,0x1082b24,0x2400,50},
+            {0x13d1b87,0x1081174,0x1082bc4,0x2680,49},
+            {0x13d1b0b,0x1080a90,0x1082ba4,0x2600,55},
+            {0x13d1c03,0x1081798,0x1082be4,0x2700,56},
+            {0x13d1a13,0x107fd28,0x1082b64,0x2500,53},
+            {0x13d189f,0x107d910,0x1082aa4,0x2200,49}
+        };
+        const auto &icon=icons[fighter];
+        if(d.word(icon.map)!=(fighter ? 0x18000u : 0xb080u) || d.word(icon.map+4)!=8 || d.word(icon.map+8)!=7)
+            throw std::runtime_error("unsupported VF1 portrait map");
         auto &portrait=prepared.portrait;
         portrait.width=56;portrait.height=64;portrait.pixels.resize(56*64);
         for(unsigned y=0;y<64;++y)for(unsigned x=0;x<56;++x) {
-            const unsigned tile=*d.main_bytes(map+12+(y/8)*7+x/8,1);
-            if(tile>=50)throw std::runtime_error("invalid Akira portrait tile");
-            const auto *row=d.main_bytes(graphics+tile*32+(y%8)*4,4);
+            const unsigned cell=(y/8)*7+x/8;
+            const unsigned tile=(fighter ? rom_zip::le16(d.main_bytes(icon.map+12+2*cell,2)) :
+                byte(icon.map+12+cell))-icon.first;
+            if(tile>=icon.count)throw std::runtime_error("invalid VF1 portrait tile");
+            const auto *row=d.main_bytes(icon.graphics+tile*32+(y%8)*4,4);
             const uint32_t packed=(uint32_t(rom_zip::le16(row))<<16)|rom_zip::le16(row+2);
             const unsigned pen=(packed>>(28-4*(x%8)))&15;
-            const auto bgr=rom_zip::le16(d.main_bytes(palette+pen*2,2));
+            const auto bgr=rom_zip::le16(d.main_bytes(icon.palette+pen*2,2));
             uint32_t rgb=0xff000000;
             for(unsigned axis=0;axis<3;++axis) {
                 const unsigned value=(bgr>>(axis*5))&31;

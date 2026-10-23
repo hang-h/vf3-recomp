@@ -49,7 +49,7 @@ before atomically replacing the saved ZIP; failed imports preserve the previous 
 The archive limit is 512 MiB. Settings, logs, backup RAM and EEPROM live in the app's
 Library area. Replacing a ROM after the game starts requires relaunching.
 
-## Optional VF1 / VF2 Akira appearances
+## Optional VF1 / VF2 appearances
 
 Supply your own complete MAME **vf** set as **vf.zip** and **vf2** set as
 **vf2.zip**. On iPhone/iPad, copy them to **Files → On My iPhone/iPad → VF3 Recomp
@@ -57,8 +57,10 @@ Supply your own complete MAME **vf** set as **vf.zip** and **vf2** set as
 `vf3.zip`, or pass `--vf1-rom /path/to/vf.zip` and `--vf2-rom /path/to/vf2.zip`.
 The Files import button is for `vf3.zip`; copy the optional companions using Files.
 
-On the character-select screen, highlight **Akira**. Each **Up press** cycles
-**VF3 → VF1 → VF2 → VF3**; release the stick between presses. Confirm with the
+For **Akira, Pai, Lau, Wolf, Jeffry, Kage, Sarah and Jacky**, each **Up press**
+cycles **VF3 → VF1 → VF2 → VF3** on the character-select screen.
+**Shun and Lion** cycle **VF3 → VF2 → VF3**. Aoi and Taka retain their native VF3
+appearances. Release the stick between presses. Confirm with the
 usual button. The label shows the current appearance and the next Up choice.
 Each player chooses independently, starting from VF3 for each new selection.
 Missing or invalid companions are skipped. **Down** returns an alternate
@@ -67,8 +69,9 @@ Fighting controls work normally. No menu setting is needed or saved.
 
 Only appearance changes; VF3 supplies the moves, game rules and shadows. VF1 and
 VF2 bodies, hands, headband ribbons and belts are decoded from their respective
-ROMs. Finger poses and ribbon motion are approximated from VF3, and belt tails
-have no separate cloth simulation. The face stays neutral. Both VF3 outfits use
+ROMs. Finger poses are approximated from VF3. Akira ribbons follow VF3 cloth
+bones; other imported hair and accessory chains currently use a rigid attachment
+without separate cloth simulation. The face stays neutral. Both VF3 outfits use
 the selected game's P1 appearance. The selection screen shows that game's 3D
 head and original ROM portrait, and victory close-ups keep the selected appearance. See [model notes](../tools/models/README.md)
 for texture/lighting limitations and local verification commands.

@@ -1,4 +1,5 @@
 #include "vf1_akira.h"
+#include "fighter_layouts.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -122,8 +123,9 @@ bool Vf1Akira::load(const std::string &zip, std::string &error)
     return load_assets(assets,AkiraSource::VF1,error);
 }
 
-bool Vf1Akira::load_assets(const vf1_models::Assets &assets, AkiraSource source, std::string &error)
+bool Vf1Akira::load_assets(const vf1_models::Assets &assets, AkiraSource source, std::string &error, unsigned fighter)
 {
+    if(fighter) return load_fighter_assets(assets,source,error,fighter);
     if(std::any_of(assets.parts.begin(),assets.parts.end(),[](const auto &p){return p.empty();})) {
         error="Akira source is missing a body part";return false;
     }
@@ -193,12 +195,14 @@ bool Vf1Akira::load_assets(const vf1_models::Assets &assets, AkiraSource source,
     mesh_key_base=key_base;replace_hands=has_hands;replace_ribbon=has_ribbon;replace_belt=has_belt;
     model2_source=model2;
     source_portrait=assets.portrait;
+    roster_fighter=0;
     error.clear();return true;
 }
 
 size_t Vf1Akira::apply(Scene &scene, unsigned outfit_mask, unsigned preview_mask) const
 {
     if (!enabled || !ready() || !((outfit_mask|preview_mask) & 3)) return 0;
+    if(roster_fighter) return apply_fighter(scene,outfit_mask,preview_mask);
     static const Meshes empty = std::make_shared<std::vector<Mesh>>();
     size_t replaced=0;
     // Some stages split each fighter across a dozen lighting viewports. Keep
@@ -295,8 +299,13 @@ size_t Vf1Akira::apply(Scene &scene, unsigned outfit_mask, unsigned preview_mask
             // The animated face occupies +1 in the selection head-only layout,
             // but +25 in fights. Fight +1 is a shadow, so identify the face by
             // both its source node and the layout-specific matrix offset.
-            const bool original_face=m.source_node==(outfit ? 0x51e48u : 0x50990u) &&
-                slot==(preview ? 1 : 25);
+            // Reactions can replace the animated face with four static pieces.
+            // These are separate nodes, including when source ribbon data is absent.
+            constexpr uint32_t reaction_faces[2][4]={{0x5bf18,0x5bf28,0x5bf30,0x5bf38},
+                                                     {0x5bee8,0x5bef8,0x5bf00,0x5bf08}};
+            const bool face_node=m.source_node==(outfit ? 0x51e48u : 0x50990u) ||
+                std::find(std::begin(reaction_faces[outfit]),std::end(reaction_faces[outfit]),m.source_node)!=std::end(reaction_faces[outfit]);
+            const bool original_face=face_node && slot==(preview ? 1 : 25);
             const bool original_belt=m.source_node==(outfit ? 0x430d8u : 0x42f58u) || m.source_node==(outfit ? 0x430c8u : 0x42f48u);
             if (original_face || slot==0 || (slot>=2 && slot<=(preview ? 3 : 8)) ||
                 (replace_ribbon && ribbon_visible && slot>=(preview ? 4 : 9) && slot<=(preview ? 17 : 25)) ||
@@ -310,6 +319,201 @@ size_t Vf1Akira::apply(Scene &scene, unsigned outfit_mask, unsigned preview_mask
         found[size_t(Part::Head)]->meshes=std::move(head_with_ribbon);
         for(size_t side=0;side<2;++side)if(replace_hands[side] && wrists[side])wrists[side]->meshes=hands[side][poses[side]];
         ++replaced;
+    }
+    return replaced;
+}
+
+bool Vf1Akira::load_fighter_assets(const vf1_models::Assets &assets,AkiraSource source,
+                                 std::string &error,unsigned fighter)
+{
+    if(fighter>=fighter_layouts::fighters.size() ||
+       std::any_of(assets.parts.begin(),assets.parts.end(),[](const auto &p){return p.empty();})) {
+        error="Missing fighter body parts";return false;
+    }
+    const auto &layout=fighter_layouts::fighters[fighter].outfits[0];
+    if(!layout.head_node) {error="Fighter skeleton has not been verified";return false;}
+    constexpr float units=2048;
+    const bool model2=source==AkiraSource::VF2;
+    const uint64_t key=0x5700000000000000ull | (uint64_t(model2?2:1)<<48) | (uint64_t(fighter)<<40);
+    constexpr unsigned bone[]={0,0,3,4,6,7,10,11,0,13,14,0,0};
+    decltype(parts) next;
+    for(size_t i=0;i<next.size();++i) {
+        auto mesh=assets.parts[i];
+        Binding b={Part(i),0,0,units,units,-units,0,0};
+        const float length=assets.source_joints[bone[i]][0];
+        if(bone[i] && length>.01f && layout.parts[i].joint_length>0)
+            b.sx=layout.parts[i].joint_length/length;
+        if(i==size_t(Part::Torso)) {
+            const float neck=assets.source_joints[1][0],shoulder=assets.source_joints[2][0];
+            const float width=std::abs(assets.source_joints[2][2]);
+            if(neck>shoulder && shoulder>.01f && width>.01f && layout.neck_length>layout.shoulder_height &&
+               layout.shoulder_height>0 && layout.shoulder_half_width>0) {
+                for(auto &t:mesh)for(auto &p:t.points) {
+                    p[0]=p[0]<=shoulder ? p[0]*layout.shoulder_height/(shoulder*units) :
+                        (layout.shoulder_height+(p[0]-shoulder)*(layout.neck_length-layout.shoulder_height)/(neck-shoulder))/units;
+                    p[2]*=layout.shoulder_half_width/(width*units);
+                }
+            }
+        }
+        next[i]=convert(mesh,b,key);
+    }
+    decltype(hands) next_hands;
+    std::array<bool,2> has_hands{};
+    for(unsigned side=0;side<2;++side) {
+        has_hands[side]=std::all_of(assets.hands[side].begin(),assets.hands[side].end(),[](const auto &m){return !m.empty();});
+        if(has_hands[side])for(unsigned pose=0;pose<32;++pose)
+            next_hands[side][pose]=convert(assets.hands[side][pose],{Part(32+side*32+pose),0,0,units,units,-units,0,0},key);
+    }
+    std::vector<vf1_models::Strand> head_chains;
+    unsigned accessory_identity=128;
+    auto add_chain=[&](const vf1_models::Strand &chain) {
+        if(chain.segments.empty() || chain.segments.size()!=chain.lengths.size() ||
+           std::any_of(chain.segments.begin(),chain.segments.end(),[](const auto &m){return m.empty();}))return;
+        if(chain.bone==2) {head_chains.push_back(chain);return;}
+        if(chain.bone!=1 && chain.bone!=9)return;
+        vf1_models::Mesh geometry;
+        float distance=0;
+        for(size_t s=0;s<chain.segments.size();++s) {
+            for(auto t:chain.segments[s]) {
+                for(auto &p:t.points)p={chain.anchor[0]*units+(model2?-distance:distance)-p[1]*units,
+                    (chain.anchor[1]+p[0])*units,-(chain.anchor[2]+p[2])*units};
+                geometry.push_back(t);
+            }
+            distance+=chain.lengths[s]*units;
+        }
+        append(next[size_t(chain.bone==1 ? Part::Torso : Part::Pelvis)],geometry,accessory_identity++,key);
+    };
+    for(const auto &chain:assets.strands)add_chain(chain);
+    for(const auto &chain:assets.extra_head_ribbons)add_chain(chain);
+    for(const auto &chain:assets.extra_strands)add_chain(chain);
+    if(!assets.belt_knot.empty()) {
+        auto knot=assets.belt_knot;
+        const auto &a=assets.strands[1].anchor,&b=assets.strands[2].anchor;
+        for(auto &t:knot)for(auto &p:t.points)for(unsigned k=0;k<3;++k)p[k]=(p[k]+(a[k]+b[k])/2)*units*(k==2?-1:1);
+        append(next[size_t(Part::Pelvis)],knot,119,key);
+    }
+    parts=std::move(next);hands=std::move(next_hands);ribbons=std::move(head_chains);
+    replace_hands=has_hands;roster_fighter=fighter;model2_source=model2;mesh_key_base=key;
+    source_portrait=assets.portrait;error.clear();return true;
+}
+
+size_t Vf1Akira::apply_fighter(Scene &scene,unsigned outfit_mask,unsigned preview_mask) const
+{
+    static const Meshes empty=std::make_shared<std::vector<Mesh>>();
+    size_t replaced=0;
+    const auto &fighter=fighter_layouts::fighters[roster_fighter];
+    for(unsigned outfit=0;outfit<2;++outfit) {
+        if(!((outfit_mask|preview_mask)&(1u<<outfit)))continue;
+        const auto &layout=fighter.outfits[outfit];
+        if(!layout.head_node)continue;
+        for(auto &head_vp:scene.viewports)for(auto &head:head_vp.models) {
+            if(head.source_node!=layout.head_node || (layout.head_addr && head.addr!=layout.head_addr))continue;
+            const int base=head.matrix_index;
+            auto same_camera=[&](const Viewport &v) {
+                return v.matrix_table==head_vp.matrix_table && v.root_matrix==head_vp.root_matrix &&
+                    !std::memcmp(v.root.m,head_vp.root.m,sizeof v.root.m);
+            };
+            // Native detail culling changes the number of matrices allocated before
+            // and between limbs (notably Pai's alternate outfit). Source nodes are
+            // outfit-specific; use their identities and physical joint distances,
+            // retaining fixed torso/head anchors and rejecting ambiguous instances.
+            std::array<Model *,size_t(Part::Count)> found{};
+            bool invalid=false;
+            for(auto &v:scene.viewports)if(same_camera(v))for(auto &m:v.models)
+                for(size_t i=0;i<found.size();++i)if(layout.parts[i].node && m.source_node==layout.parts[i].node) {
+                    const int slot=int(m.matrix_index)-base;
+                    // Shun's coat also draws the pelvis mesh at a torso attachment.
+                    if(roster_fighter==8 && outfit==0 && i==size_t(Part::Pelvis) && slot==-2)continue;
+                    const bool anchor=i==size_t(Part::Head) || i==size_t(Part::Torso);
+                    if(found[i] || (anchor ? slot!=layout.parts[i].slot : slot<=0))invalid=true;
+                    else found[i]=&m;
+                }
+            if(invalid || found[size_t(Part::Head)]!=&head)continue;
+            const size_t count=std::count_if(found.begin(),found.end(),[](auto p){return p;});
+            const bool preview=count==1 && (preview_mask&(1u<<outfit));
+            if(!preview && (count<2 || !(outfit_mask&(1u<<outfit))))continue;
+            std::array<Model *,2> wrists{};
+            for(auto &v:scene.viewports)if(same_camera(v))for(auto &m:v.models)
+                for(unsigned side=0;side<2;++side)
+                    if(layout.wrist_nodes[side] && m.source_node==layout.wrist_nodes[side]) {
+                        if(wrists[side] || int(m.matrix_index)<=base)invalid=true;
+                        else wrists[side]=&m;
+                    }
+            auto joint_matches=[&](const Model *parent,const Model *child,float expected) {
+                if(!parent || !child || expected<=0)return true; // a culled limb is valid
+                Mat4 inv;
+                if(!inverse(parent->matrix,inv))return false;
+                const auto p=transform(inv,{child->matrix.m[12],child->matrix.m[13],child->matrix.m[14]});
+                const float length=std::sqrt(p[0]*p[0]+p[1]*p[1]+p[2]*p[2]);
+                return std::isfinite(length) && std::abs(length-expected)<=2.f+expected*.05f;
+            };
+            if(!preview) {
+                invalid |= !joint_matches(found[size_t(Part::Torso)],&head,layout.neck_length);
+                constexpr unsigned parents[]={2,4,6,7,9,10};
+                constexpr unsigned children[]={3,5,7,8,10,11};
+                for(unsigned i=0;i<6;++i)
+                    invalid |= !joint_matches(found[parents[i]],found[children[i]],layout.parts[parents[i]].joint_length);
+                invalid |= !joint_matches(found[3],wrists[0],layout.parts[3].joint_length);
+                invalid |= !joint_matches(found[5],wrists[1],layout.parts[5].joint_length);
+            }
+            if(invalid)continue;
+            Mat4 inverse_head;
+            if(!inverse(head.matrix,inverse_head))continue;
+            auto with_hair=std::make_shared<std::vector<Mesh>>(*parts[size_t(Part::Head)]);
+            vf1_models::Mesh hair;
+            for(size_t chain_index=0;chain_index<ribbons.size();++chain_index) {
+                const auto &chain=ribbons[chain_index];
+                Point anchor={chain.anchor[0]*2048,chain.anchor[1]*2048,-chain.anchor[2]*2048};
+                for(size_t segment=0;segment<chain.segments.size();++segment) {
+                    Point down=chain.rest_direction,thickness={1,0,0},width={0,1,0};
+                    if(!layout.head_cloth.empty()) {
+                        const auto &binding=layout.head_cloth[std::min(layout.head_cloth.size()-1,
+                            (chain_index*chain.segments.size()+segment)*layout.head_cloth.size()/(ribbons.size()*chain.segments.size()))];
+                        for(auto &v:scene.viewports)if(same_camera(v))for(auto &m:v.models)if(m.source_node==binding.node) {
+                            auto local_axis=[&](unsigned col) {
+                                Point p{};const auto direction=axis(m.matrix,int(col));
+                                for(unsigned r=0;r<3;++r)for(unsigned c=0;c<3;++c)p[r]+=inverse_head.m[c*4+r]*direction[c];
+                                const float length=std::sqrt(p[0]*p[0]+p[1]*p[1]+p[2]*p[2]);
+                                if(length>1e-8f)for(auto &x:p)x/=length;
+                                return p;
+                            };
+                            down=local_axis(0);thickness=local_axis(1);width=local_axis(2);
+                        }
+                    }
+                    for(auto t:chain.segments[segment]) {
+                        for(auto &p:t.points) {
+                            Point q=anchor;
+                            for(unsigned k=0;k<3;++k)q[k]+=2048*((model2_source?p[1]:-p[1])*down[k]+p[0]*thickness[k]+p[2]*width[k]);
+                            p=q;
+                        }
+                        hair.push_back(t);
+                    }
+                    for(unsigned k=0;k<3;++k)anchor[k]+=chain.lengths[segment]*2048*down[k];
+                }
+            }
+            append(with_hair,hair,121,mesh_key_base);
+            for(auto &v:scene.viewports)if(same_camera(v))for(auto &m:v.models) {
+                const bool owned=std::find(layout.owned_nodes.begin(),layout.owned_nodes.end(),m.source_node)!=layout.owned_nodes.end();
+                if(owned || m.source_node==layout.face_node)m.meshes=empty;
+            }
+            for(size_t i=0;i<found.size();++i)if(found[i])found[i]->meshes=parts[i];
+            head.meshes=std::move(with_hair);
+            for(unsigned side=0;side<2;++side)if(wrists[side] && replace_hands[side]) {
+                float openness=0;unsigned fingers=0;
+                const auto direction=axis(wrists[side]->matrix,0);
+                for(auto &v:scene.viewports)if(same_camera(v))for(auto &m:v.models) {
+                    const int relative=int(m.matrix_index)-int(wrists[side]->matrix_index);
+                    if(relative>=6 && relative<=15 && relative%3==0) {
+                        const auto tip=axis(m.matrix,0);
+                        for(unsigned k=0;k<3;++k)openness+=direction[k]*tip[k];
+                        ++fingers;
+                    }
+                }
+                const unsigned pose=fingers ? unsigned(std::lround(31*std::clamp((openness/fingers+.65f)/1.65f,0.f,1.f))) : 0;
+                wrists[side]->meshes=hands[side][pose];
+            }
+            ++replaced;
+        }
     }
     return replaced;
 }

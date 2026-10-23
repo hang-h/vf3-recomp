@@ -103,6 +103,7 @@
 #include "../video/r3d_scene.h"
 #include "../video/vf1_akira.h"
 #include "../video/vf2_akira.h"
+#include "../video/fighter_appearances.h"
 #include "akira_selection.h"
 #include "akira_portrait.h"
 #include "../video/r3d_raster.h"
@@ -733,11 +734,12 @@ struct Game
 	SoundBoard sound;
 	video::TileGen tiles;
 	video::SceneBuilder builder;
-	video::Vf1Akira vf1_akira;
-	video::Vf2Akira vf2_akira;
+	video::FighterAppearances vf1_akira{video::AkiraSource::VF1};
+	video::FighterAppearances vf2_akira{video::AkiraSource::VF2};
 	AkiraSelection akira_selection;
 	bool force_vf1_akira = false, force_vf2_akira = false;
 	unsigned appearance_mask = 0, vf2_appearance_mask = 0, selection_hint_mask = 0;
+	std::array<unsigned,2> appearance_fighters{255,255};
 	std::string loaded_zip;
 	// the last two frames' scenes (smooth motion goes between them) and their 2D layers
 	video::Scene scene[2];
@@ -899,26 +901,40 @@ struct Game
 		newest ^= 1;
 		builder.build(board, scene[newest]);
 		const auto selection = AkiraSelection::snapshot(board.ram);
-		const unsigned next_mask = force_vf2_akira ? 0 : force_vf1_akira ? 3 : akira_selection.mask(selection,1);
-		const unsigned next_vf2_mask = force_vf2_akira ? 3 : force_vf1_akira ? 0 : akira_selection.mask(selection,2);
-		vf1_akira.apply(scene[newest], force_vf1_akira ? 3 : AkiraSelection::outfits(board.ram, next_mask),
-		                AkiraSelection::previews(selection, next_mask));
-		vf2_akira.apply(scene[newest], force_vf2_akira ? 3 : AkiraSelection::outfits(board.ram, next_vf2_mask),
-		                AkiraSelection::previews(selection, next_vf2_mask));
-		have_prev = frame > 1 && appearance_mask == next_mask && vf2_appearance_mask == next_vf2_mask;
-		if (vf2_appearance_mask != next_vf2_mask) fprintf(stderr, "VF2 Akira selection: player mask %u\n", next_vf2_mask);
+		const unsigned forced_players=(selection[0].fighter==0 ? 1u : 0u) | (selection[1].fighter==0 ? 2u : 0u);
+		const unsigned next_mask = force_vf2_akira ? 0 : force_vf1_akira ? forced_players : akira_selection.mask(selection,1);
+		const unsigned next_vf2_mask = force_vf2_akira ? forced_players : force_vf1_akira ? 0 : akira_selection.mask(selection,2);
+		for(unsigned fighter=0;fighter<fighter_roster::count;++fighter) {
+		    auto owners=[&](unsigned mask) {
+		        unsigned result=0;
+		        for(unsigned p=0;p<2;++p)if(selection[p].fighter==fighter)result|=mask&(1u<<p);
+		        return result;
+		    };
+		    const unsigned vf1=owners(next_mask),vf2=owners(next_vf2_mask);
+		    vf1_akira.apply(scene[newest], force_vf1_akira ? (fighter==0 ? 3 : 0) : AkiraSelection::outfits(board.ram,vf1,fighter),
+		                    force_vf1_akira && fighter!=0 ? 0 : AkiraSelection::previews(selection,vf1,fighter),fighter);
+		    vf2_akira.apply(scene[newest], force_vf2_akira ? (fighter==0 ? 3 : 0) : AkiraSelection::outfits(board.ram,vf2,fighter),
+		                    force_vf2_akira && fighter!=0 ? 0 : AkiraSelection::previews(selection,vf2,fighter),fighter);
+		}
+		const std::array<unsigned,2> next_fighters={selection[0].fighter,selection[1].fighter};
+		have_prev = frame > 1 && appearance_mask == next_mask && vf2_appearance_mask == next_vf2_mask && appearance_fighters==next_fighters;
+		appearance_fighters=next_fighters;
+		if (vf2_appearance_mask != next_vf2_mask) fprintf(stderr, "VF2 appearance: player mask %u\n", next_vf2_mask);
 		vf2_appearance_mask = next_vf2_mask;
-		if (appearance_mask != next_mask) fprintf(stderr, "VF1 Akira selection: player mask %u\n", next_mask);
+		if (appearance_mask != next_mask) fprintf(stderr, "VF1 appearance: player mask %u\n", next_mask);
 		appearance_mask = next_mask;
 		selection_hint_mask = 0;
-		if (vf1_akira.ready() || vf2_akira.ready()) for (unsigned p=0;p<2;++p)
-			if (selection[p].human && selection[p].selecting && selection[p].akira) selection_hint_mask |= 1u<<p;
+		for (unsigned p=0;p<2;++p)
+			if (selection[p].human && selection[p].selecting &&
+			    (vf1_akira.ready(selection[p].fighter) || vf2_akira.ready(selection[p].fighter))) selection_hint_mask |= 1u<<p;
 		tiles.aligned(below, above);
 		// The roster is shared by both players. The player currently choosing
-		// supplies its Akira icon; the native border/highlight stays untouched.
-		for(unsigned p=0;p<2;++p) if(selection[p].human && selection[p].preview && selection[p].akira) {
-		    if(next_mask & (1u<<p)) akira_portrait::draw(above,video::W,video::H,vf1_akira.portrait());
-		    else if(next_vf2_mask & (1u<<p)) akira_portrait::draw(above,video::W,video::H,vf2_akira.portrait());
+		// supplies its icon; the native border/highlight stays untouched.
+		for(unsigned active=0;active<2;++active) for(unsigned p=0;p<2;++p)
+		if(selection[p].human && unsigned(selection[p].selecting)==active && (selection[0].preview || selection[1].preview)) {
+		    const unsigned fighter=selection[p].fighter;
+		    if(next_mask & (1u<<p)) akira_portrait::draw(above,video::W,video::H,vf1_akira.portrait(fighter),fighter);
+		    else if(next_vf2_mask & (1u<<p)) akira_portrait::draw(above,video::W,video::H,vf2_akira.portrait(fighter),fighter);
 		}
 		tiles.aligned_wide(below_wide);
 		bg_moved = video::TileGen::scrolled(prev_scroll, tiles.scroll, prev_below, below, bg_dx, bg_dy) && have_prev;
@@ -943,6 +959,7 @@ struct Game
 		int newest = 0;
 		bool have_prev = false, full_3d = false, bg_moved = false;
 		unsigned appearance_mask = 0, vf2_appearance_mask = 0, selection_hint_mask = 0;
+		std::array<unsigned,2> appearance_fighters{255,255};
 		float bg_dx = 0, bg_dy = 0;
 		std::vector<uint32_t> below = std::vector<uint32_t>(video::W * video::H), above = std::vector<uint32_t>(video::W * video::H);
 		std::vector<uint32_t> below_wide = std::vector<uint32_t>(video::WW * video::H);
@@ -961,6 +978,7 @@ struct Game
 		view.appearance_mask = appearance_mask;
 		view.vf2_appearance_mask = vf2_appearance_mask;
 		view.selection_hint_mask = selection_hint_mask;
+		view.appearance_fighters = appearance_fighters;
 		view.bg_moved = bg_moved;
 		view.bg_dx = bg_dx;
 		view.bg_dy = bg_dy;
@@ -1195,11 +1213,11 @@ int main(int argc, char **argv)
 			if (!std::filesystem::is_regular_file(candidate, ec)) continue;
 			std::string error;
 			if (!appearance.load(candidate.string(), error)) {
-				fprintf(stderr, "%s Akira: cannot load %s: %s\n", name, candidate.string().c_str(), error.c_str());
+				fprintf(stderr, "%s appearances: cannot load %s: %s\n", name, candidate.string().c_str(), error.c_str());
 				return;
 			}
 			appearance.enabled = true;
-			fprintf(stderr, "%s Akira: loaded companion %s\n", name, candidate.string().c_str());
+			fprintf(stderr, "%s appearances: loaded companion %s\n", name, candidate.string().c_str());
 			return;
 		}
 	};
@@ -3013,10 +3031,11 @@ int main(int argc, char **argv)
 				char label[40];
 				const unsigned current=(game.view.appearance_mask & (1u<<p)) ? 1 : (game.view.vf2_appearance_mask & (1u<<p)) ? 2 : 0;
 				const char *names[]={"VF3","VF1","VF2"};
-				const bool loaded[]={true,game.vf1_akira.ready(),game.vf2_akira.ready()};
+				const unsigned fighter=game.view.appearance_fighters[p];
+				const bool loaded[]={true,game.vf1_akira.ready(fighter),game.vf2_akira.ready(fighter)};
 				unsigned next=current;
 				do { next=(next+1)%3; } while (!loaded[next]);
-				snprintf(label,sizeof label,"P%u AKIRA: %s  UP: %s",p+1,names[current],names[next]);
+				snprintf(label,sizeof label,"P%u %s: %s  UP: %s",p+1,fighter_roster::names[fighter],names[current],names[next]);
 				SDL_RenderDebugText(ren,x,y,label);
 			}
 			SDL_SetRenderScale(ren, sx, sy);
