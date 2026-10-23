@@ -146,6 +146,7 @@ void Raster::prepare(const Scene &scene)
 	tris.clear();
 	for (auto &b : batches) b = {};
 	std::vector<int> items;
+	std::vector<size_t> triangle_offsets;
 	for (int pri = 0; pri < 4; pri++) {
 		Priority &P = prio[pri];
 		P.any = false;
@@ -165,14 +166,25 @@ void Raster::prepare(const Scene &scene)
 				if (P.any && (pass == 0 || P.has_overlay))
 					for (auto &v : scene.viewports)
 						if (v.priority == pri) gather(v, layer, pass == 1, items);
-				// the meshes' polygons on every core, in parts kept in order
-				const int parts = int(std::min<size_t>(items.size(), 64));
+				// Balance actual triangles rather than mesh counts. A single
+				// imported colour group can contain thousands of triangles while
+				// a stage mesh contains only one. Contiguous slices preserve order.
+				triangle_offsets.assign(1, 0);
+				for (int item : items)
+					triangle_offsets.push_back(triangle_offsets.back() + draws[size_t(item)].mesh->verts.size() / 3);
+				const size_t triangles = triangle_offsets.back();
+				const int parts = int(std::min<size_t>((triangles + 127) / 128, 64));
 				if (parts_out.size() < size_t(parts)) parts_out.resize(size_t(parts));
 				parallel_tasks(parts, [&](int k) {
 					std::vector<Tri> &out = parts_out[size_t(k)];
 					out.clear();
-					const size_t a = items.size() * size_t(k) / size_t(parts), e = items.size() * size_t(k + 1) / size_t(parts);
-					for (size_t i = a; i < e; i++) prepare_mesh(items[i], out);
+					const size_t a = triangles * size_t(k) / size_t(parts), e = triangles * size_t(k + 1) / size_t(parts);
+					size_t i = size_t(std::upper_bound(triangle_offsets.begin(), triangle_offsets.end(), a) - triangle_offsets.begin() - 1);
+					for (; i < items.size() && triangle_offsets[i] < e; ++i) {
+						const size_t first = std::max(a, triangle_offsets[i]) - triangle_offsets[i];
+						const size_t end = std::min(e, triangle_offsets[i + 1]) - triangle_offsets[i];
+						prepare_mesh(items[i], first * 3, end * 3, out);
+					}
 				});
 				for (int k = 0; k < parts; k++) tris.insert(tris.end(), parts_out[size_t(k)].begin(), parts_out[size_t(k)].end());
 				B.end = tris.size();
@@ -201,7 +213,7 @@ void Raster::gather(const Viewport &vp, int layer, bool overlay, std::vector<int
 
 bool Raster::arcade_lod = false;
 
-void Raster::prepare_mesh(int di, std::vector<Tri> &result) const
+void Raster::prepare_mesh(int di, size_t first, size_t end, std::vector<Tri> &result) const
 {
 	const Draw &d = draws[size_t(di)];
 	const Viewport &vp = *d.vp;
@@ -216,7 +228,7 @@ void Raster::prepare_mesh(int di, std::vector<Tri> &result) const
 	for (int c = 0; c < 3; c++) {
 		for (int rr = 0; rr < 3; rr++) nmat[c * 3 + rr] = M.m[c * 4 + rr] / m.scale;
 	}
-		for (size_t i = 0; i + 2 < mesh.verts.size(); i += 3) {
+		for (size_t i = first; i + 2 < end; i += 3) {
 			float v[3][11];
 			for (int k = 0; k < 3; k++) {
 				const Vertex &s = mesh.verts[i + k];
@@ -233,6 +245,15 @@ void Raster::prepare_mesh(int di, std::vector<Tri> &result) const
 					fn[q] = M.m[q] * s.face_normal[0] + M.m[4 + q] * s.face_normal[1] + M.m[8 + q] * s.face_normal[2];
 				o[9] = o[0] * fn[0] + o[1] * fn[1] + o[2] * fn[2];
 				o[10] = o[9] * -vp.cota * s.texture_np * lod_k;
+			}
+			// Imported source strips need both sides. Transform their positions
+			// once, then emit the same front/back sequence as explicit duplicate
+			// triangles. Keep both candidates at grazing angles, where rounding
+			// can leave the per-vertex facing tests on different sides of zero.
+			for (unsigned side = 0; side < (mesh.two_sided ? 2u : 1u); ++side) {
+			if (side) for (auto &p : v) {
+				for (unsigned q = 3; q < 6; ++q) p[q] = -p[q];
+				p[9] = -p[9]; p[10] = -p[10];
 			}
 			if (v[0][9] > 0 && v[1][9] > 0 && v[2][9] > 0)
 				continue;   // facing away
@@ -272,24 +293,31 @@ void Raster::prepare_mesh(int di, std::vector<Tri> &result) const
 			if (n < 3)
 				continue;
 			float (*poly)[11] = in;
+			// Almost all prepared faces are triangles. Store only three
+			// vertices instead of reserving eight for every tiny texture cell;
+			// clipping uses the same fan order as both renderers already draw.
+			for (int fan = 1; fan + 1 < n; ++fan) {
 			Tri T;
 			T.draw = di;
-			T.n = n;
+			const int indices[3] = { 0, fan, fan + 1 };
 			float minx = 1e30f, maxx = -1e30f, miny = 1e30f, maxy = -1e30f;
-			for (int k = 0; k < n; k++) {
-				float iw = 1.0f / -poly[k][2];
-				float nx = (2.0f * (poly[k][0] * iw) - (r + l)) / (r - l);
-				float ny = (2.0f * (poly[k][1] * iw) - (t + b)) / (t - b);
+			for (int k = 0; k < 3; k++) {
+				const float *p = poly[indices[k]];
+				float iw = 1.0f / -p[2];
+				float nx = (2.0f * (p[0] * iw) - (r + l)) / (r - l);
+				float ny = (2.0f * (p[1] * iw) - (t + b)) / (t - b);
 				T.sx[k] = sx0 + (nx + 1.0f) * 0.5f * sw;
 				T.sy[k] = sy0 + (1.0f - ny) * 0.5f * sh;
 				T.iw[k] = iw;
-				for (int q = 0; q < 11; q++) T.a[k][q] = poly[k][q] * iw;
+				for (int q = 0; q < 11; q++) T.a[k][q] = p[q] * iw;
 				minx = std::min(minx, T.sx[k]); maxx = std::max(maxx, T.sx[k]);
 				miny = std::min(miny, T.sy[k]); maxy = std::max(maxy, T.sy[k]);
 			}
 			if (!(maxx >= x0 && minx < x1 && maxy >= y0 && miny < y1))
 				continue;   // off the viewport (or not a number)
 			result.push_back(T);
+			}
+			}
 		}
 }
 

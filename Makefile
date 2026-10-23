@@ -94,6 +94,14 @@ $(BIN)/fighter-expression-test: $(call objs,tests/fighter_expression_test.cpp)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@
 
+$(BIN)/two-sided-mesh-test: $(call objs,$(CORE) tests/two_sided_mesh_test.cpp) $(SLJIT_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+
+$(BIN)/vf2-body-fit-test: $(call objs,tests/vf2_body_fit_test.cpp)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@
+
 $(BIN)/vf2-models-test: $(call objs,src/host/vf2_models.cpp tests/vf2_models_test.cpp)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)

@@ -1,5 +1,6 @@
 #include "vf1_akira.h"
 #include "fighter_layouts.h"
+#include "vf2_body_fit.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -49,11 +50,13 @@ Meshes convert(const vf1_models::Mesh &source, const Binding &b, uint64_t key_ba
         if (!(length > 1e-8f)) continue;
         auto &mesh = groups[t.colour];
         mesh.lighting = true;
+        mesh.two_sided = true;
         mesh.key = key_base | (uint64_t(b.part) << 32) | t.colour;
-        // Model 1's strips have mixed winding. Explicit opposite face normals
-        // preserve both sides through the common CPU/GPU back-face test.
-        for (int side : {1,-1}) for (auto x : v) {
-            for (int k=0; k<3; ++k) x.normal[k]=x.face_normal[k]=side*n[k]/length;
+        // Source strips have mixed winding. The common CPU/GPU preparation
+        // supplies the reverse normal without storing and transforming every
+        // triangle twice.
+        for (auto x : v) {
+            for (int k=0; k<3; ++k) x.normal[k]=x.face_normal[k]=n[k]/length;
             mesh.verts.push_back(x);
         }
     }
@@ -140,11 +143,7 @@ bool Vf1Akira::load_assets(const vf1_models::Assets &assets, AkiraSource source,
         if(model2) { b.sx=b.sy=units;b.sz=-units;b.z=0; }
         if(model2 && b.part==Part::Torso) {
             auto torso=assets.parts[size_t(b.part)];
-            // VF2's native waist bridges are not part of the rigid torso mesh.
-            // Extend only its lower hem so VF3's torso/pelvis bend stays covered;
-            // the chest, shoulders and neck retain their original coordinates.
-            for(auto &t:torso)for(auto &p:t.points)
-                p[0]-=.03f*std::clamp((.16f-p[0])/.16f,0.0f,1.0f);
+            fit_vf2_waist(torso,assets.parts[size_t(Part::Pelvis)],assets.source_joints[2][0]);
             next[size_t(b.part)]=convert(torso,b,key_base);
         } else next[size_t(b.part)] = convert(assets.parts[size_t(b.part)], b,key_base);
     }
@@ -449,6 +448,7 @@ bool Vf1Akira::load_fighter_assets(const vf1_models::Assets &assets,AkiraSource 
                     p[2]*=layout.shoulder_half_width/(width*units);
                 }
             }
+            if(model2)fit_vf2_waist(mesh,assets.parts[size_t(Part::Pelvis)],layout.shoulder_height/units);
         }
         next[i]=convert(mesh,b,key);
     }

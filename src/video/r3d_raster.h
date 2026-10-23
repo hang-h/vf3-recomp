@@ -62,9 +62,9 @@ public:
 	struct Tri
 	{
 		int draw;
-		int n;                // 3 to 8 (a triangle clipped by the near plane and the view's sides)
-		float sx[8], sy[8], iw[8];
-		float a[8][11];       // the attributes over w
+		int n = 3;            // clipped polygons are emitted as a triangle fan
+		float sx[3], sy[3], iw[3];
+		float a[3][11];       // the attributes over w
 	};
 	struct Batch { size_t begin = 0, end = 0; };
 	struct Priority { bool any = false, has_overlay = false; };
@@ -86,7 +86,7 @@ private:
 	bool sun_clamp = true;
 
 	void gather(const Viewport &vp, int layer, bool overlay, std::vector<int> &items);
-	void prepare_mesh(int draw, std::vector<Tri> &out) const;
+	void prepare_mesh(int draw, size_t first, size_t end, std::vector<Tri> &out) const;
 	std::vector<std::vector<Tri>> parts_out;
 	void draw_band(const Scene &scene, int y0, int y1);
 	void fog_layers(const Scene &scene, int y0, int y1);

@@ -140,9 +140,12 @@ No test ROM or image is committed.
   uniform 2048 scaling and reversed local Z. VF2's 0.25 arm and 0.39/0.44 leg
   segments match VF3's 512 and 798.72/901.12 lengths. Distinct mesh cache keys
   allow VF1 and VF2 appearances in the same mirror match.
-  VF2's lower torso is extended toward the pelvis by up to 0.03 source units
-  (61.44 VF3 units), fading to zero at local X=0.16. This covers the waist seam
-  during VF3 torso bends without enlarging the shoulders or changing gameplay.
+  All ten VF2 fighters use a lower-torso fit after skeleton retargeting. It
+  measures each torso hem and pelvis rim and extends the hem toward a 0.045
+  source-unit overlap at the shared waist joint. The extension fades out at
+  55% of shoulder height; chest/shoulder anchors, waist width, pelvis, textures
+  and gameplay remain unchanged. This replaces Akira's fixed 0.03 extension
+  and covers the missing source waist bridges during ordinary VF3 bends.
 - `src/video/vf1_akira.cpp` converts Model 1 coordinates into VF3 local space and
   groups flat triangles by colour for the common CPU/GPU renderer. Opposite face
   normals preserve Model 1's mixed strip winding.
@@ -495,3 +498,47 @@ macOS, simulator and unsigned device builds compile and link. Physical-device
 frame rate still requires an on-device check.
 Ignored evidence is in `build/jacky-fix` and `build/jacky-performance`; the native
 REA process capture is `ev_35bbf5009fb2ac371f281d4512defe4f64ca968f0c70e17cbf9bd2f44244c2e2`.
+
+### Shared imported-geometry preparation and VF2 waist fitting
+
+Imported meshes store each triangle once with a two-sided flag. The common
+CPU/GPU preparation transforms its vertices once and supplies opposite lighting
+normals for the back, preserving the original front/back order even at grazing
+angles. Work is split by triangle counts rather than mesh counts, so a large
+VF2 colour group can use several workers. Prepared geometry stores three
+vertices per triangle (176 bytes instead of 456); clipped polygons emit the
+same triangle fan used by both renderers. Source texture sampling, facial
+cutouts and all 669 VF2 expression recipes retain their original detail.
+
+Three alternating optimized desktop runs measured the following medians:
+
+| Jacky scene | Preparation before / after | CPU rendering before / after | Stored triangles before / after |
+| --- | --- | --- | --- |
+| Selection preview | 0.762 / 0.457 ms | 2.307 / 1.659 ms | 77,170 / 38,587 |
+| Two VF2 fighters | 2.383 / 1.322 ms | 10.646 / 5.265 ms | 223,688 / 116,332 |
+
+GPU mode also uses this preparation, but GPU draw cost is not reduced: the
+synchronized Metal battle measurement was 3.061 / 3.158 ms. These are isolated
+desktop timings, not end-to-end frame times or physical-device FPS. The shared
+preparation changes apply to the entire imported roster, including VF1.
+
+Before waist fitting, all 140 native/VF1/VF2 screenshots across ten fighters and
+five selection/battle states were pixel-identical to the previous build. After
+fitting, only the 30 VF2 battle images changed. Both outfits were checked in
+guard and attack poses, including Shun's bent stance. The fit runs when loading
+the appearance, not every frame; it adds no triangles. It is a rigid overlap
+approximation, not the original Model 2 deforming waist skin, so extreme poses
+can still need further adjustment.
+
+`two-sided-mesh-test` checks 182 exact pixel/attribute comparisons, including
+near-plane clipping, negative scale, transparency, grazing angles, empty draws,
+and differently partitioned 4,257-triangle scenes. `vf2-body-fit-test` checks
+overlap, fixed upper anchors, unchanged pelvis/colours and idempotence. The
+all-roster source decoder, appearance ownership/cache and expression tests also
+pass. A fresh 65,000-frame native run passes all 2,748 visible-scene expression
+checks across 18 source/fighter combinations. macOS, iOS simulator and unsigned
+iOS device builds compile and link; macOS Metal and simulator battle captures
+confirm the fitted Jacky. Physical-device frame rate has not been measured.
+Local screenshots and benchmark logs remain ignored under
+`build/jacky-render-cost` and `build/vf2-waist`. No ROMs or decoded assets are
+committed or bundled.

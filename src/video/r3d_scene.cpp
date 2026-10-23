@@ -1247,7 +1247,7 @@ bool interpolate(const Scene &a, const Scene &b, float t, Scene &out, InterpStat
 					if (!q.meshes || q.meshes->size() != m.meshes->size()) return false;
 					for (size_t k = 0; k < m.meshes->size(); k++) {
 						const Mesh &x = (*m.meshes)[k], &y = (*q.meshes)[k];
-						if (!(x.verts.size() == y.verts.size() && x.key == y.key && x.x == y.x && x.y == y.y && x.page == y.page &&
+						if (!(x.verts.size() == y.verts.size() && x.two_sided == y.two_sided && x.key == y.key && x.x == y.x && x.y == y.y && x.page == y.page &&
 						      x.width == y.width && x.height == y.height && x.format == y.format)) return false;
 					}
 					return true;
