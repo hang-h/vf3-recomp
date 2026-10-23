@@ -43,12 +43,18 @@ int main()
     assert(choice.mask(s)==1);
     c={}; choice.update(c,s,true);
     c.down[0]=true; choice.update(c,s,true);
-    assert(choice.mask(s)==0 && !c.down[0]);
-    c={}; c.down[0]=true; choice.update(c,s,true); // consume until release
-    assert(!c.down[0]);
-    c={}; choice.update(c,s,true);
-    c.down[0]=true; choice.update(c,s,true); // a second down navigates lower row
-    assert(c.down[0]);
+    assert(choice.mask(s)==1 && c.down[0]); // navigate directly even with VF1 selected
+    s[0].fighter=6;s[0].akira=false; // native DOWN moved Akira -> Sarah
+    c={};c.down[0]=true;choice.update(c,s,true);
+    assert(choice.mask(s)==0 && !c.down[0]); // held direction cannot cycle on row entry
+    c={};choice.update(c,s,true);
+    c.down[0]=true;choice.update(c,s,true);
+    assert(choice.mask(s)==1 && !c.down[0]); // fresh DOWN selects Sarah VF1
+    c={};c.up[0]=true;choice.update(c,s,true);
+    assert(choice.mask(s)==1 && c.up[0]); // UP navigates straight back
+    s[0].fighter=0;s[0].akira=true;
+    c={};c.up[0]=true;choice.update(c,s,true);
+    assert(choice.mask(s)==0 && !c.up[0]); // no accidental top-row cycle
     c={}; c.up[1]=true; choice.update(c,s,true);
     assert(choice.mask(s)==2);
     c={}; c.punch[1]=true; choice.update(c,s,true);
@@ -74,24 +80,25 @@ int main()
     choice.reset();
     s={{{true,true,true},{true,true,true}}};
     c={}; choice.update(c,s,true,true);
-    auto press_up=[&](unsigned player,bool vf1=true,bool vf2=true) {
+    auto press_cycle=[&](unsigned player,bool vf1=true,bool vf2=true) {
         c={}; choice.update(c,s,vf1,vf2);
-        c.up[player]=true; choice.update(c,s,vf1,vf2);
-        assert(!c.up[player]);
+        const bool bottom=fighter_roster::cycle_down(s[player].fighter);
+        (bottom ? c.down[player] : c.up[player])=true; choice.update(c,s,vf1,vf2);
+        assert(!(bottom ? c.down[player] : c.up[player]));
     };
-    press_up(0); assert(choice.mask(s,1)==1 && choice.mask(s,2)==0);
-    press_up(0); assert(choice.mask(s,1)==0 && choice.mask(s,2)==1);
+    press_cycle(0); assert(choice.mask(s,1)==1 && choice.mask(s,2)==0);
+    press_cycle(0); assert(choice.mask(s,1)==0 && choice.mask(s,2)==1);
     c={}; c.up[0]=true; choice.update(c,s,true,true);
     assert(choice.mask(s,2)==1); // holding does not rotate again
-    press_up(1); assert(choice.mask(s,1)==2 && choice.mask(s,2)==1);
-    press_up(0); assert(choice.mask(s,1)==2 && choice.mask(s,2)==0); // VF3
-    press_up(0); assert(choice.mask(s,1)==3); // repeat entire cycle
+    press_cycle(1); assert(choice.mask(s,1)==2 && choice.mask(s,2)==1);
+    press_cycle(0); assert(choice.mask(s,1)==2 && choice.mask(s,2)==0); // VF3
+    press_cycle(0); assert(choice.mask(s,1)==3); // repeat entire cycle
     choice.reset(); c={}; choice.update(c,s,false,true);
-    press_up(0,false,true); assert(choice.mask(s,1)==0 && choice.mask(s,2)==1);
-    press_up(0,false,true); assert(choice.mask(s,2)==0); // missing VF1 is skipped
+    press_cycle(0,false,true); assert(choice.mask(s,1)==0 && choice.mask(s,2)==1);
+    press_cycle(0,false,true); assert(choice.mask(s,2)==0); // missing VF1 is skipped
     choice.reset(); c={}; choice.update(c,s,true,false);
-    press_up(0,true,false); assert(choice.mask(s,1)==1);
-    press_up(0,true,false); assert(choice.mask(s,1)==0); // missing VF2 is skipped
+    press_cycle(0,true,false); assert(choice.mask(s,1)==1);
+    press_cycle(0,true,false); assert(choice.mask(s,1)==0); // missing VF2 is skipped
     // Final KO clears the human task before replay/You Lose. Preserve only the
     // defeated player's selected appearance while the same battle actors exist.
     for(unsigned player=0;player<2;++player)for(unsigned variant:{1u,2u}) {
@@ -100,7 +107,7 @@ int main()
             s[player]={true,true,true,player+1,true,player ? 13u : 0u,false};
             s[player^1].actor=20;
             c={};choice.update(c,s,true,true);
-            for(unsigned i=0;i<variant;++i)press_up(player);
+            for(unsigned i=0;i<variant;++i)press_cycle(player);
             s[player].selecting=s[player].preview=false;
             s[player].fighting=true;
             c={};choice.update(c,s,true,true);
@@ -138,12 +145,12 @@ int main()
         s[player]={true,true,fighter==0,player+1,true,game+13*player,false,fighter};
         s[player^1].actor=12;
         c={};choice.update(c,s,true,true);
-        press_up(player);
+        press_cycle(player);
         const unsigned first=fighter<8 ? 1 : 2;
         assert(choice.mask(s,first)==(1u<<player) && choice.mask(s,3-first)==0);
-        if(fighter<8) {press_up(player);assert(choice.mask(s,2)==(1u<<player));}
-        press_up(player);assert(choice.mask(s,1)==0 && choice.mask(s,2)==0);
-        press_up(player);assert(choice.mask(s,first)==(1u<<player));
+        if(fighter<8) {press_cycle(player);assert(choice.mask(s,2)==(1u<<player));}
+        press_cycle(player);assert(choice.mask(s,1)==0 && choice.mask(s,2)==0);
+        press_cycle(player);assert(choice.mask(s,first)==(1u<<player));
         // Each query addresses only this fighter's preview, never another one.
         assert(AkiraSelection::previews(s,1u<<player,fighter)==player+1);
         assert(AkiraSelection::previews(s,1u<<player,(fighter+1)%10)==0);
@@ -169,13 +176,25 @@ int main()
         assert(AkiraSelection::outfits(ram,1u<<player,fighter)==player+1);
         assert(AkiraSelection::outfits(ram,1u<<player,(fighter+1)%10)==0);
     }
+    // Players on opposite rows cycle independently; simultaneous directions do not cycle.
+    choice.reset();s={{{true,true,true},{true,true,false,2,true,15,false,6}}};
+    c={};choice.update(c,s,true,true);
+    c.up[0]=true;c.down[1]=true;choice.update(c,s,true,true);
+    assert(choice.mask(s,1)==3 && !c.up[0] && !c.down[1]);
+    c={};c.up[0]=true;c.down[1]=true;choice.update(c,s,true,true);
+    assert(choice.mask(s,1)==3); // held input is one press on both rows
+    c={};choice.update(c,s,true,true);
+    c.up[0]=c.down[0]=c.up[1]=c.down[1]=true;choice.update(c,s,true,true);
+    assert(choice.mask(s,1)==3 && c.down[0] && c.up[1]);
+    s[1].selecting=false;c={};c.down[1]=true;choice.update(c,s,true,true);
+    assert(c.down[1]); // fighting DOWN remains a crouch
     // Cursor movement resets a locked choice, and the other player's edition survives.
     choice.reset();s={{{true,true,true},{true,true,true}}};
-    c={};choice.update(c,s,true,true);press_up(0);press_up(1);
+    c={};choice.update(c,s,true,true);press_cycle(0);press_cycle(1);
     c={};c.punch[0]=true;choice.update(c,s,true,true);
     s[0].fighter=1;s[0].akira=false;
     c={};choice.update(c,s,true,true);assert(choice.mask(s,1)==2);
-    press_up(0);assert(choice.mask(s,1)==3);
+    press_cycle(0);assert(choice.mask(s,1)==3);
     // Unsupported VF3-only fighters leave every control native.
     for(unsigned game=0;game<26;++game)if(fighter_roster::from_actor(game)==255) {
         ram[0x108042^3]=uint8_t(game);std::memcpy(ram.data()+0x108000,&phase,4);
@@ -184,11 +203,12 @@ int main()
         assert(c.up[0] && c.down[0] && choice.mask(s,1)==0 && choice.mask(s,2)==0);
         c={};c.up[0]=true;choice.update(c,s,true,true);assert(c.up[0]);
     }
-    // Shun/Lion have no VF1 edition: with only VF1 installed, UP stays native.
+    // Shun/Lion have no VF1 edition: with only VF1 installed, both directions stay native.
     for(unsigned fighter:{8u,9u}) {
         choice.reset();s={};s[0]={true,true,false,1,true,255,false,fighter};
         c={};choice.update(c,s,true,false);c.up[0]=true;choice.update(c,s,true,false);
         assert(c.up[0] && choice.mask(s,1)==0 && choice.mask(s,2)==0);
+        c={};c.down[0]=true;choice.update(c,s,true,false);assert(c.down[0]);
     }
     // Composite only the selected fighter's measured cell, retaining marker ink.
     constexpr unsigned width=496,height=384;

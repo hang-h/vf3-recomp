@@ -77,30 +77,26 @@ public:
             const bool available=loaded[1] || loaded[2];
             if (!loaded[selected[p]] || (!s.human && !retains_result(p,state)) ||
                 (s.selecting && (!was_selecting[p] || previous_fighter[p]!=s.fighter))) {
-                selected[p]=0; locked[p]=false; eat_down[p]=false;
+                selected[p]=0; locked[p]=false;
                 result_bound[p]=false;
             }
             if (selected[p] && choice_fighter[p]!=s.fighter) {
                 selected[p]=0; locked[p]=false; result_bound[p]=false;
             }
             if (available && s.human && s.selecting) {
-                // VF3 has two roster rows. Down still navigates normally when
-                // VF3 is selected, so the lower row remains reachable.
-                if (!locked[p]) {
-                    if (up_edge && !down) {
-                        // One edge per press, skipping companions not installed.
-                        do { selected[p]=(selected[p]+1)%3; } while (!loaded[selected[p]]);
-                        choice_fighter[p]=s.fighter;
-                    }
-                    else if (down_edge && !up && selected[p]) {
-                        selected[p]=0; eat_down[p]=true;
-                    }
+                // Cycle away from the other row; the inward direction remains
+                // native navigation even when an imported appearance is selected.
+                const bool bottom=fighter_roster::cycle_down(s.fighter);
+                const bool cycle_edge=bottom ? down_edge : up_edge;
+                const bool opposite=bottom ? up : down;
+                if (!locked[p] && cycle_edge && !opposite) {
+                    do { selected[p]=(selected[p]+1)%3; } while (!loaded[selected[p]]);
+                    choice_fighter[p]=s.fighter;
                 }
-                input.up[p]=false;
-                if (!down) eat_down[p]=false;
-                if (eat_down[p]) input.down[p]=false;
+                if(bottom) input.down[p]=false;
+                else input.up[p]=false;
                 if (input.punch[p] || input.kick[p] || input.guard[p] || input.escape[p]) locked[p]=true;
-            } else eat_down[p]=false;
+            }
             // The player task becomes inactive at the final KO, before the
             // replay and You Lose pose finish. Keep the choice attached to this
             // battle's actor pair, rather than ending it with the input task.
@@ -134,5 +130,5 @@ private:
     std::array<unsigned,2> selected{}; // 0=VF3, 1=VF1, 2=VF2
     std::array<std::array<unsigned,2>,2> result_actors{};
     std::array<bool,2> result_bound{};
-    std::array<bool,2> locked{}, previous_up{}, previous_down{}, was_selecting{}, eat_down{};
+    std::array<bool,2> locked{}, previous_up{}, previous_down{}, was_selecting{};
 };

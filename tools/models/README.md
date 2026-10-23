@@ -1,12 +1,13 @@
 # VF1 / VF2 roster appearances
 
-Highlight **Akira, Pai, Lau, Wolf, Jeffry, Kage, Sarah or Jacky** on the
-character-select screen. Each **Up press** cycles **VF3 → VF1 → VF2 → VF3**.
-**Shun and Lion** cycle **VF3 → VF2 → VF3**; Aoi and Taka stay native VF3.
-Held Up advances only once. **Down** returns to VF3.
-Confirm normally. Each human player chooses independently, and each new selection
-starts with VF3. Native Down navigation to VF3's lower roster row remains
-available when VF3 is selected. Fighting controls are unchanged.
+On the character-select screen, **Up cycles the top row** and **Down cycles the
+bottom row**. The opposite direction always navigates to the other row.
+**Akira, Pai, Lau, Wolf, Jeffry, Kage, Sarah and Jacky** cycle
+**VF3 → VF1 → VF2 → VF3**; **Shun and Lion** cycle **VF3 → VF2 → VF3**.
+Aoi and Taka stay native VF3. Held input advances only once, including when a
+navigation press is held across a row change. Confirm normally. Each human player
+chooses independently; a different character or new selection starts with VF3.
+Fighting controls are unchanged.
 
 The appearances are decoded from the player's own `vf.zip` and `vf2.zip`.
 Put them beside `vf3.zip`; on iOS use the app's `Documents/roms` folder and relaunch.
@@ -77,7 +78,7 @@ An actual Pai VF2 selection/defeat run retained the appearance for 165 sampled
 inactive-player result scenes and cleared it when attract mode began. Pai victory
 close-ups and progression into the next fight also retained the imported model.
 The final macOS Metal app was exercised with a VF1/VF2 Pai mirror match and a
-VF2 Kage selection/fight; the iOS simulator displayed VF2 Shun after one Up press.
+VF2 Kage selection/fight; the iOS simulator displayed VF2 Shun after one cycle press.
 macOS, simulator and unsigned device apps were incrementally compiled/linked
 using the recorded Xcode commands and cached dependencies. Logs/screenshots are
 under `build/roster-selection`; the device build has not been tested on hardware.
@@ -160,9 +161,9 @@ No test ROM or image is committed.
   selected VF3 animated face remains and that the unselected face is unchanged.
 - `src/host/akira_selection.h` reads revision D's per-player task at
   `0x108000 + player * 0x80`: phase 5 is unlocked selection, fighter byte +0x42
-  identifies Akira (0 or 13). Up is consumed only while choosing Akira; Down
-  returns to VF3 and is consumed until release. Other directions/fighters and all
-  fighting input remain native. Rendered actor IDs at `0x1087f0 + player * 0x2000`
+  identifies the fighter (Akira is 0 or 13). The outward direction cycles an
+  imported appearance: Up for the top row and Down for the bottom row. The
+  inward direction, unsupported fighters and all fighting input remain native. Rendered actor IDs at `0x1087f0 + player * 0x2000`
   map each player's choice to the standard/alternate head (0/13); ambiguous
   identities remain original. Appearance changes clear frame interpolation.
   At the final KO the player task becomes inactive before the defeat replay and

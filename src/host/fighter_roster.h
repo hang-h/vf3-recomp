@@ -9,6 +9,10 @@ inline constexpr std::array<const char *,count> names={
 // VF3's actor IDs differ from the companion ROMs' select-screen order.
 inline constexpr std::array<unsigned,count> game_ids={0,6,4,7,5,3,2,1,8,10};
 inline constexpr std::array<unsigned,count> grid_cells={0,1,2,3,4,5,6,7,8,9};
+constexpr bool cycle_down(unsigned fighter)
+{
+    return fighter<count && grid_cells[fighter]>=6;
+}
 constexpr unsigned from_actor(unsigned id)
 {
     if(id>=26)return 255;

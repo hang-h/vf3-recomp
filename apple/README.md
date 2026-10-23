@@ -57,14 +57,16 @@ Supply your own complete MAME **vf** set as **vf.zip** and **vf2** set as
 `vf3.zip`, or pass `--vf1-rom /path/to/vf.zip` and `--vf2-rom /path/to/vf2.zip`.
 The Files import button is for `vf3.zip`; copy the optional companions using Files.
 
-For **Akira, Pai, Lau, Wolf, Jeffry, Kage, Sarah and Jacky**, each **Up press**
-cycles **VF3 → VF1 → VF2 → VF3** on the character-select screen.
-**Shun and Lion** cycle **VF3 → VF2 → VF3**. Aoi and Taka retain their native VF3
-appearances. Release the stick between presses. Confirm with the
-usual button. The label shows the current appearance and the next Up choice.
-Each player chooses independently, starting from VF3 for each new selection.
-Missing or invalid companions are skipped. **Down** returns an alternate
-appearance to VF3; Down while VF3 is selected retains normal roster navigation.
+On the character-select screen, use **Up on the top row** and **Down on the
+bottom row** to cycle appearances. The opposite direction moves to the other row,
+even when an imported appearance is selected. Release the stick between presses.
+The label shows **UP** or **DOWN** for the highlighted character.
+
+**Akira, Pai, Lau, Wolf, Jeffry, Kage, Sarah and Jacky** cycle
+**VF3 → VF1 → VF2 → VF3**. **Shun and Lion** cycle **VF3 → VF2 → VF3**.
+Aoi and Taka retain their native VF3 appearances. Confirm with the usual button.
+Each player chooses independently; moving to another character or starting a new
+selection resets the appearance to VF3. Missing or invalid companions are skipped.
 Fighting controls work normally. No menu setting is needed or saved.
 
 Only appearance changes; VF3 supplies the moves, game rules and shadows. VF1 and

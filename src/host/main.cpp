@@ -3035,7 +3035,8 @@ int main(int argc, char **argv)
 				const bool loaded[]={true,game.vf1_akira.ready(fighter),game.vf2_akira.ready(fighter)};
 				unsigned next=current;
 				do { next=(next+1)%3; } while (!loaded[next]);
-				snprintf(label,sizeof label,"P%u %s: %s  UP: %s",p+1,fighter_roster::names[fighter],names[current],names[next]);
+				snprintf(label,sizeof label,"P%u %s: %s  %s: %s",p+1,fighter_roster::names[fighter],names[current],
+				         fighter_roster::cycle_down(fighter) ? "DOWN" : "UP",names[next]);
 				SDL_RenderDebugText(ren,x,y,label);
 			}
 			SDL_SetRenderScale(ren, sx, sy);
