@@ -322,8 +322,9 @@ struct Decoder {
                 // Model 2 draws the alpha-cutout facial details over coplanar
                 // skin in painter order. Real3D uses a depth buffer, and RGB
                 // batching otherwise lets the skin overwrite eyes and lips.
-                // Its source normals point inward; lift only the head decals
-                // by 0.41 destination units, leaving the strip itself intact.
+                // Other heads retain their small source-normal lift. Akira
+                // uses frame-derived depth-only decals below, without moving
+                // the triangles apart or opening seams in his facial ink.
                 const Point normal=vertex(at+4);
                 const unsigned palette=(h[3]>>6)&1023;
                 const bool detail=(prepared || descriptor==head_descriptor) && (h[0]&0x2000) &&
@@ -343,7 +344,7 @@ struct Decoder {
                     // entire surface must remain above those two layers.
                     if(native_actor==3 && (prepared || descriptor==head_descriptor) && palette==92)
                         layer=std::max(layer,3u);
-                    const float lift=.0002f*std::max(layer,unsigned(detail));
+                    const float lift=native_actor==0 && textured ? 0.f : .0002f*std::max(layer,unsigned(detail));
                     for(unsigned k=0;k<3;++k) {p[k]-=lift*normal[k];q[k]-=lift*normal[k];r[k]-=lift*normal[k];}
                     const size_t begin=out.size();
                     face(out,h,p,q,r,up,uq,ur,0,limit,detail,(attr>>18)&31);
@@ -601,6 +602,28 @@ void faces(const Decoder &source,vf1_models::Assets &out) {
         return result;
     };
 }
+// Animated facial ink is authored after the skin in Model 2 painter order.
+// Identify it from the source frames, then bias only its depth comparison.
+// Moving separate triangle vertices along their normals opens seams in the ink.
+void akira_decals(vf1_models::Assets &out) {
+    const auto decode=out.decode_face;
+    const auto neutral=decode(0);
+    std::vector<bool> decal(neutral.size());
+    for(unsigned frame=1;frame<out.face_frame_count;++frame) {
+        const auto face=decode(frame);
+        if(face.size()!=neutral.size())throw std::runtime_error("VF2 Akira decal topology changed");
+        for(size_t i=0;i<face.size();++i)
+            decal[i]=decal[i] || face[i].material!=neutral[i].material || face[i].uv!=neutral[i].uv;
+    }
+    auto mark=[decal](Mesh mesh) {
+        if(mesh.size()!=decal.size())throw std::runtime_error("VF2 Akira decal mask size changed");
+        for(size_t i=0;i<mesh.size();++i)if(decal[i])mesh[i].depth_bias=.004f;
+        return mesh;
+    };
+    out.parts[size_t(vf1_models::Part::Head)]=mark(out.parts[size_t(vf1_models::Part::Head)]);
+    out.face_frames[0]=out.parts[size_t(vf1_models::Part::Head)];
+    out.decode_face=[decode,mark](unsigned frame){return mark(decode(frame));};
+}
 // Build blink-only eye overlays from source frame differences. Hurt aliases
 // retain their original frown; these new materials are exclusive to blinking.
 void akira_blinks(vf1_models::Assets &out) {
@@ -814,7 +837,7 @@ bool load(const std::string &path,vf1_models::Assets &out,std::string &error,uns
         }
         faces(d,next);
         next.textures=std::move(d.materials->textures);
-        if(fighter==0 && textured)akira_blinks(next);
+        if(fighter==0 && textured) {akira_decals(next);akira_blinks(next);}
         out=std::move(next);error.clear();return true;
     } catch(const std::exception &e) {error=e.what();return false;}
 }

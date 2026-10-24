@@ -114,6 +114,23 @@ void check_blink(const char *zip)
     auto same=[](const Triangle &x,const Triangle &y) {
         return x.material==y.material && x.points==y.points && x.uv==y.uv && x.colour==y.colour;
     };
+    std::vector<bool> animated(neutral.size());
+    for(unsigned f=1;f<a.face_frame_count;++f) {
+        const auto frame=a.decode_face(f);
+        for(size_t i=0;i<frame.size();++i)animated[i]=animated[i] ||
+            frame[i].material!=neutral[i].material || frame[i].uv!=neutral[i].uv;
+    }
+    unsigned decals=0;
+    for(unsigned f=0;f<a.face_frame_count;++f) {
+        const auto frame=a.decode_face(f);
+        for(size_t i=0;i<frame.size();++i) {
+            require((frame[i].depth_bias>0)==animated[i],"depth bias missing or applied to skin/hair");
+            if(!f)decals+=animated[i];
+        }
+    }
+    require(decals>0 && decals<neutral.size(),"empty or whole-head decal mask");
+    for(size_t part=0;part<size_t(Part::Head);++part)
+        for(const auto &t:a.parts[part])require(t.depth_bias==0,"face bias leaked into body");
     video::Vf1Akira model;require(model.load_assets(a,video::AkiraSource::VF2,error),error.c_str());model.enabled=true;
     unsigned comparisons=0;
     for(unsigned state:{1u,2u}) {
@@ -138,6 +155,7 @@ void check_blink(const char *zip)
                 }
                 require(changed_brow && kept_eye,"blink failed to combine neutral brow and eyelid");
             }
+            for(size_t i=0;i<blink.size();++i)require(blink[i].depth_bias==speaking[i].depth_bias,"blink lost decal depth");
             require(eyes>0,"blink changed no eyes");++comparisons;
             fighter_expression::Pose pose;pose.valid=true;pose.speaking=true;pose.blink=state;
             for(unsigned opening=0;opening<=16;++opening) {

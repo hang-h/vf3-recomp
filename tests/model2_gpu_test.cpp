@@ -2,6 +2,7 @@
 #include "../src/gpu/r3d_gpu.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 
 static void require(bool ok,const char *message) {if(!ok)throw std::runtime_error(message);}
@@ -70,6 +71,38 @@ int main()
                 vp.sun[2]=sun;vp.ambient=.3f;vp.sun_intensity=.4f;
                 vp.models.front().meshes->front().lighting=true;
                 check(scene);
+            }
+            // Facial ink lies just behind the skin's different triangulation.
+            // Bias depth alone: keep projection/UVs, transparent holes and a
+            // genuinely nearer occluder, independently of draw order.
+            auto ink=std::make_shared<Model2Texture>();ink->width=ink->height=32;ink->flags=0x6000;
+            ink->words.resize(128+32*32,15);
+            std::fill_n(ink->words.begin(),128,0xff00ff00u);
+            for(unsigned y=0;y<32;++y)for(unsigned x=0;x<16;++x)ink->words[128+y*32+x]=1;
+            for(bool reverse:{false,true}) {
+                auto scene=picture(ink);auto &model=scene.viewports[0].models[0];
+                auto &eye=model.meshes->front();eye.depth_bias=.004f;
+                auto skin=eye;skin.depth_bias=0;skin.model2_texture.reset();skin.textured=false;
+                for(auto &v:skin.verts){v.pos[2]=.001f;v.pos[0]=v.pos[0]*1.1f+.0125f;v.pos[1]*=1.1f;v.colour[0]=255;v.colour[1]=v.colour[2]=0;}
+                model.meshes->push_back(skin);
+                auto cover=skin;
+                for(auto &v:cover.verts){v.pos[2]=.1f;v.pos[0]=v.pos[0]*.1f;v.colour[0]=0;v.colour[2]=255;}
+                model.meshes->push_back(cover);
+                if(reverse)std::reverse(model.meshes->begin(),model.meshes->end());
+                check(scene);
+                require(cpu.base[64*128+10].g>.9f,"skin clips biased eye ink");
+                require(cpu.base[64*128+30].r>.9f,"transparent eye hole hides skin");
+                require(cpu.base[64*128+64].b>.9f,"decal ignores nearer occluder");
+                const auto biased=cpu.tris;
+                auto plain=scene;plain.viewports[0].models[0].meshes=std::make_shared<std::vector<video::Mesh>>(*model.meshes);
+                for(auto &m:*plain.viewports[0].models[0].meshes)m.depth_bias=0;
+                cpu.prepare(plain);require(cpu.tris.size()==biased.size(),"bias changed clipping");
+                for(size_t i=0;i<biased.size();++i) {
+                    const auto &a=biased[i],&b=cpu.tris[i];
+                    require(!std::memcmp(a.sx,b.sx,sizeof a.sx) && !std::memcmp(a.sy,b.sy,sizeof a.sy) &&
+                            !std::memcmp(a.iw,b.iw,sizeof a.iw) && !std::memcmp(a.a,b.a,sizeof a.a),
+                            "depth bias moved geometry or changed perspective attributes");
+                }
             }
             // Force buffer growth and bounded-cache eviction, then revisit a
             // retained scene and native texture RAM after subsequent uploads.

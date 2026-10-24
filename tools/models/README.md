@@ -680,10 +680,9 @@ Neutral faces and active speech can use the overlay; hurt, defeat and recovery
 keep their authored expressions. Reading/rendering a pose does not advance the
 clock, and actor changes/reset clear a pending blink.
 
-VF1's centre-distance painter-sort bias is not copied into Real3D. VF3 already
-uses a depth buffer and a small outward lift for source facial decals. Actual
-selection captures verify the open, half-closed and closed eye overlays with
-that existing depth treatment, including a speaking mouth.
+VF1's centre-distance painter-sort bias is not copied into Real3D. The first
+implementation retained a small outward geometry lift, which still let skin
+clip the upper eyes. VF2 Akira now uses the depth-only treatment below.
 
 Validation: 34 speech/eyelid combinations preserve mouth geometry, neutral
 brows, source palette and player isolation; timer tests cover independent
@@ -694,3 +693,27 @@ recipes still pass, including ASan/UBSan. macOS, iOS simulator and unsigned iOS
 device builds compile/link; the iOS simulator GPU capture also confirms the
 closed-eye preview. Local probes and screenshots remain in ignored
 `build/vf2-blink`; no ROMs or decoded assets are committed.
+
+### VF2 Akira facial decal depth
+
+All 79 native head recipes are compared at load time. Triangles whose material
+or UVs change are facial ink (eyes, eyebrows and mouth); their depth comparison
+is biased forward by 0.004 source units, scaled with the model. The source
+vertices no longer move along separate polygon normals. Raising that old lift
+revealed the eyes but split adjacent eyebrow and mouth triangles apart.
+
+The CPU and GPU retain the original projected positions, reciprocal w, UVs,
+lighting and clipping. Only depth testing/writes use the biased reciprocal
+depth; transparent texels still discard, and nearer geometry still occludes
+these decals. Blinking and speaking retain the same mask. Body geometry,
+other fighters and native VF3 draws have no added bias.
+
+Local evidence in `build/vf2-face-depth` includes a REA native VF2 selection
+replay, before/after captures and the geometry-lift comparison. Tests cover
+all 79 recipes, blinking with speech, CPU/Metal occlusion in both draw orders,
+transparent holes and unchanged projection/perspective attributes.
+
+Verification: 64 CPU/Metal comparisons pass. All 140 roster captures pass;
+135 are byte-identical to the preceding colour baseline, with only the five
+VF2 Akira captures changing. macOS, simulator and unsigned device builds
+compile/link, and macOS plus iOS simulator GPU captures show the corrected eyes.

@@ -44,7 +44,7 @@ struct Vp
 };
 
 static const uint F_TEXTURED = 1, F_ALPHA_TEST = 2, F_TEX_ALPHA = 4, F_LIGHTING = 8, F_FIXED = 16, F_SMOOTH = 32,
-	F_SPECULAR = 64, F_INVERTED = 128, F_MODEL2 = 256;
+	F_SPECULAR = 64, F_INVERTED = 128, F_MODEL2 = 256, F_DEPTH_BIAS = 512;
 
 static const int MIP_X[12] = { 0, 1024, 1536, 1792, 1920, 1984, 2016, 2032, 2040, 2044, 2046, 2047 };
 static const int MIP_Y[11] = { 0, 512, 768, 896, 960, 992, 1008, 1016, 1020, 1022, 1023 };
@@ -250,12 +250,13 @@ FsOut main(PolyV i)
 	if (i.misc.w > 0)
 		discard;   // facing away
 	const float wi = 1.0 / i.pos.w;   // (SV_Position.w is w: the reciprocal of GLSL's gl_FragCoord.w)
+	const Draw d = draws.Load<Draw>(i.draw * sizeof(Draw));
+	const float depth_iw = (d.flags & F_DEPTH_BIAS) ? i.pos.z / 1e-3 : wi; // reversed depth, including decal bias; projection/UV w stays intact
 #if FS_LAYER != 0
 	// translucent: only in front of the opaque layer
-	if (wi <= odepth.Load(int3(int2(i.pos.xy), 0)).r)
+	if (depth_iw <= odepth.Load(int3(int2(i.pos.xy), 0)).r)
 		discard;
 #endif
-	const Draw d = draws.Load<Draw>(i.draw * sizeof(Draw));
 	const Vp vp = vps.Load<Vp>(d.vp * sizeof(Vp));
 	bool model2_light = (d.flags & F_MODEL2) && (uint(d.ty) & 0x20000);
     float model2_sun = model2_light ? clamp(dot(vp.sun.xyz,i.normal),0.0,1.0) : 1.0;
@@ -346,7 +347,7 @@ FsOut main(PolyV i)
 	o.base = float4(c.rgb, 1);
 	o.t1 = 0;
 	o.t2 = 0;
-	o.depth = float4(wi, 0, 0, 0);
+	o.depth = float4(depth_iw, 0, 0, 0);
 #else
 	o.t = float4(c.rgb, min(c.a, 1.0));
 #endif

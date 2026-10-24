@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <tuple>
 
 namespace video {
 namespace {
@@ -32,7 +33,7 @@ constexpr Binding bindings[] = {
 Meshes convert(const vf1_models::Mesh &source, const Binding &b, uint64_t key_base,
                const std::vector<std::shared_ptr<const Model2Texture>> &textures)
 {
-    std::map<std::pair<uint32_t,unsigned>, Mesh> groups;
+    std::map<std::tuple<uint32_t,unsigned,float>, Mesh> groups;
     for (const auto &t : source) {
         Vertex v[3] = {};
         for (int i = 0; i < 3; ++i) {
@@ -50,7 +51,8 @@ Meshes convert(const vf1_models::Mesh &source, const Binding &b, uint64_t key_ba
         float n[3] = {u[1]*w[2]-u[2]*w[1], u[2]*w[0]-u[0]*w[2], u[0]*w[1]-u[1]*w[0]};
         const float length=std::sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]);
         if (!(length > 1e-8f)) continue;
-        auto &mesh = groups[{t.colour,t.material}];
+        auto &mesh = groups[{t.colour,t.material,t.depth_bias}];
+        mesh.depth_bias=t.depth_bias*std::max({std::abs(b.sx),std::abs(b.sy),std::abs(b.sz)});
         mesh.lighting = true;
         mesh.two_sided = true;
         mesh.key = key_base | (uint64_t(b.part) << 32) | (t.material?t.material:t.colour);

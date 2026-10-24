@@ -63,7 +63,7 @@ public:
 	{
 		int draw;
 		int n = 3;            // clipped polygons are emitted as a triangle fan
-		float sx[3], sy[3], iw[3];
+		float sx[3], sy[3], iw[3], depth_iw[3];
 		float a[3][11];       // the attributes over w
 	};
 	struct Batch { size_t begin = 0, end = 0; };

@@ -18,6 +18,7 @@ enum class Part {
 struct Triangle {
     uint32_t colour;
     std::array<std::array<float, 3>, 3> points;
+    float depth_bias=0; // source units, depth comparison only; never changes geometry/UVs
     unsigned material=0; // one-based index into Assets::textures, zero is flat colour
     std::array<std::array<float,2>,3> uv{}; // source texel coordinates
 };

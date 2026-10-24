@@ -34,7 +34,7 @@ struct GVp
 	float sun[4], light[4], spot_ellipse[4], spot_range[4], spot_colour[4], spot_fog_colour[4], fog[4], fog2[4];
 };
 
-enum : uint32_t { F_TEXTURED = 1, F_ALPHA_TEST = 2, F_TEX_ALPHA = 4, F_LIGHTING = 8, F_FIXED = 16, F_SMOOTH = 32, F_SPECULAR = 64, F_INVERTED = 128, F_MODEL2 = 256 };
+enum : uint32_t { F_TEXTURED = 1, F_ALPHA_TEST = 2, F_TEX_ALPHA = 4, F_LIGHTING = 8, F_FIXED = 16, F_SMOOTH = 32, F_SPECULAR = 64, F_INVERTED = 128, F_MODEL2 = 256, F_DEPTH_BIAS = 512 };
 
 const float NEAR = 1e-3f;
 
@@ -321,7 +321,7 @@ bool R3dGpu::render(const video::Scene &scene, const video::Raster &prep, const 
 		o.colour[3] = pv.colour[3] / 255.0f * d.model->alpha;
 		o.flags = (m.textured ? F_TEXTURED : 0) | (m.alpha_test ? F_ALPHA_TEST : 0) | (m.texture_alpha ? F_TEX_ALPHA : 0) |
 			(m.lighting ? F_LIGHTING : 0) | (m.fixed_shading ? F_FIXED : 0) | (m.smooth_shading ? F_SMOOTH : 0) |
-			(m.specular ? F_SPECULAR : 0) | (m.inverted ? F_INVERTED : 0);
+			(m.specular ? F_SPECULAR : 0) | (m.inverted ? F_INVERTED : 0) | (m.depth_bias ? F_DEPTH_BIAS : 0);
 		o.format = m.format; o.tx = m.x; o.ty = m.y; o.tw = m.width; o.th = m.height;
 		o.page = m.page ^ d.model->page;
 		o.wrap = m.wrap_u | (m.wrap_v << 2);
@@ -350,7 +350,7 @@ bool R3dGpu::render(const video::Scene &scene, const video::Raster &prep, const 
 				const float wv = 1.0f / t.iw[k];
 				const float nx = (t.sx[k] - d.vx) / d.vw * 2.0f - 1.0f, ny = 1.0f - (t.sy[k] - d.vy) / d.vh * 2.0f;
 				GV &o = g[k];
-				o.clip[0] = nx * wv; o.clip[1] = ny * wv; o.clip[2] = NEAR; o.clip[3] = wv;
+				o.clip[0] = nx * wv; o.clip[1] = ny * wv; o.clip[2] = d.mesh->depth_bias ? NEAR * t.depth_iw[k] * wv : NEAR; o.clip[3] = wv;
 				for (int q = 0; q < 3; q++) { o.view[q] = t.a[k][q] * wv; o.normal[q] = t.a[k][3 + q] * wv; }
 				o.misc[0] = t.a[k][6] * wv; o.misc[1] = t.a[k][7] * wv; o.misc[2] = t.a[k][8] * wv; o.misc[3] = t.a[k][9] * wv;
 				o.lodbase = t.a[k][10] * wv;

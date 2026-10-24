@@ -309,6 +309,7 @@ void Raster::prepare_mesh(int di, size_t first, size_t end, std::vector<Tri> &re
 				T.sx[k] = sx0 + (nx + 1.0f) * 0.5f * sw;
 				T.sy[k] = sy0 + (1.0f - ny) * 0.5f * sh;
 				T.iw[k] = iw;
+				T.depth_iw[k] = mesh.depth_bias ? 1.0f / std::max(NEAR, -p[2] - mesh.depth_bias * m.scale) : iw;
 				for (int q = 0; q < 11; q++) T.a[k][q] = p[q] * iw;
 				minx = std::min(minx, T.sx[k]); maxx = std::max(maxx, T.sx[k]);
 				miny = std::min(miny, T.sy[k]); maxy = std::max(maxy, T.sy[k]);
@@ -519,7 +520,8 @@ void Raster::draw_tri(const Tri &T, int layer, int band0, int band1)
 				if (mesh.layered && (stencil[at] & 0x7F))
 					continue;
 				// depth: 1/w, nearer is greater; the opaque layer passes equal, the translucent ones only nearer
-				if (layer == 0 ? wi < depth[at] : wi <= depth[at]) {
+				const float zi = b0*T.depth_iw[idx[0]] + b1*T.depth_iw[idx[1]] + b2*T.depth_iw[idx[2]];
+				if (layer == 0 ? zi < depth[at] : zi <= depth[at]) {
 					if (mesh.layered) stencil[at]++;
 					continue;
 				}
@@ -619,7 +621,7 @@ void Raster::draw_tri(const Tri &T, int layer, int band0, int band1)
 						ch += (target - ch) * fog;
 					}
 				}
-				depth[at] = wi;
+				depth[at] = zi;
 				if (mesh.layered) stencil[at]++;
 				if (layer == 0) {
 					base[at] = { c.r, c.g, c.b, 1.0f };
