@@ -558,8 +558,8 @@ Each material contains the original four-bit indices and 128 native colour
 lookup entries. `Model2Texture::sample` and the GPU shader implement the same
 mirroring, wrapping, index/coverage interpolation and luminance lookup as the
 reference decoder. Eye/lip coverage is tested at 50% before colour lookup.
-Body sampling retains the reference decoder's nearest-index behavior. Lighting still comes
-from VF3. Materials retain full colour precision; neither coarser facial
+Body sampling retains the reference decoder's nearest-index behavior. Native
+material lighting is described below. Materials retain full colour precision; neither coarser facial
 sampling nor smaller textures are used to obtain the triangle reduction.
 
 The same path handles body parts, hands, ribbons, rigid hair and all 669 facial
@@ -611,3 +611,46 @@ build/bin/model2-gpu-test
 
 Local evidence stays ignored under `build/vf2-textured`. ROMs, decoded tiles,
 native screenshots and downloaded shader tools are not committed or bundled.
+
+
+### VF2 colour response under lighting
+
+A prelit texture followed by a VF3 RGB multiply made Pai's red costume pink
+and skin grey. VF2's colour curves are nonlinear: lighting changes the colour
+lookup index, not just the brightness of an already selected RGB value.
+
+Imported materials now retain each polygon's parameter index (attribute bits
+18–22), the source ambient/diffuse word from i960 ROM `0x118f0`, 128 texel
+luminances and 64 RGB curve entries. Both CPU and GPU calculate
+`light = clamp(diffuse * max(dot(normal, sun), 0) + ambient, 0, 255)` and
+`luma = min(texel_luma * integer(light) / 256, 63)` before looking up RGB.
+The existing actor-specific colour translation and gamma conversion remain.
+Parameter 31 preserves the fixed brightness of authored facial details;
+expression preparation, deduplication and caches also retain the parameter.
+Each tile adds only 193 words, without tessellation or per-frame uploads.
+
+The light direction and coloured spotlights still belong to the VF3 stage;
+the ambient/diffuse response belongs to the VF2 material. This retargeting is
+not a replay of the VF2 stage lighting, specular pipeline or camera, so two
+games on different stages should not be expected to match pixel for pixel.
+
+Validation for this correction:
+
+- REA controlled replay of native VF2 Pai, followed by local inspection of its
+  colour RAM: 1,376,256 material-colour comparisons passed across 42 source
+  headers, 256 sun inputs and 128 texel levels. The 32 material parameter words
+  were also matched to instrumented native geometry setup. REA evidence:
+  `ev_ba3df40da451e236e6effebc39f290151a9cd1c115eb36d513d4d38bf64c7933`.
+- ROM-free tests check known nonlinear lookup results and fixed-brightness
+  details. All 128,000 legacy filtering comparisons, ten bodies, 640 hand
+  poses and 669 facial recipes pass; 62 CPU/Metal comparisons include source
+  lighting, cutouts and texture lifetime tests.
+- All 50 VF2 roster captures use the new colour response; all 90 VF1/native
+  captures remain byte-identical. Triangle counts are unchanged.
+- macOS, iOS simulator and unsigned device builds compile/link; macOS Metal
+  shows the corrected Pai in selection and battle, and the iOS simulator
+  confirms the battle colours. Physical-device colour
+  and FPS still require a run on the user's device.
+
+Local capture data, the native comparison probe and build logs stay under
+ignored `build/vf2-colour`. No ROMs or decoded assets are committed or bundled.

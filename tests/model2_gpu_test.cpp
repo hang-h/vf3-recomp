@@ -58,6 +58,19 @@ int main()
                 if(!mode)retained=texture;
                 check(picture(texture));check(picture(texture));
             }
+            // Nonlinear colour curves must see native material luminance, not
+            // a final RGB multiply. Include unlit facial ink and full sun.
+            for(unsigned parameters:{0x5f7fu,0x9e57u,0xff00u})for(float sun:{-1.f,0.f,.25f,.5f,1.f}) {
+                auto texture=std::make_shared<Model2Texture>(*retained);
+                texture->flags|=Model2Texture::NativeLighting;
+                for(unsigned i=0;i<64;++i)texture->words.push_back(0xff000000u|((i*4)<<16)|((63-i)*4<<8)|(i*i%256));
+                for(unsigned i=0;i<128;++i)texture->words.push_back(i/2);
+                texture->words.push_back(parameters);
+                auto scene=picture(texture);auto &vp=scene.viewports.front();
+                vp.sun[2]=sun;vp.ambient=.3f;vp.sun_intensity=.4f;
+                vp.models.front().meshes->front().lighting=true;
+                check(scene);
+            }
             // Force buffer growth and bounded-cache eviction, then revisit a
             // retained scene and native texture RAM after subsequent uploads.
             for(unsigned i=0;i<10;++i) {

@@ -173,7 +173,7 @@ uint model2_packed(Draw d, uint x, uint y)
     return value == 240 ? value : value | 0x00800000;
 }
 uint model2_lerp(uint a, uint b, uint f) { return (a + (((b-a)*f) >> 8)) & 0x00ff00ff; }
-float4 model2_sample(Draw d, float u, float v)
+float4 model2_sample(Draw d, float u, float v, float sun)
 {
     uint flags = uint(d.ty), lookup;
     if (!(flags & 0x10000)) {
@@ -196,13 +196,21 @@ float4 model2_sample(Draw d, float u, float v)
         if (value < 0x00400000) return 0;
         lookup = (value & 255) >> 1;
     }
-    uint colour = texram.Load(uint(d.tx) + lookup * 4);
+    uint offset = lookup;
+    if (flags & 0x20000) {
+        uint base = 128 + uint(d.tw) * uint(d.th);
+        uint parameters = texram.Load(uint(d.tx) + (base + 192) * 4);
+        uint light = uint(clamp(max(sun,0.0) * (parameters & 255) + ((parameters>>8)&255),0.0,255.0));
+        uint luma = texram.Load(uint(d.tx) + (base + 64 + lookup) * 4);
+        offset = base + min(luma * light / 256,63u);
+    }
+    uint colour = texram.Load(uint(d.tx) + offset * 4);
     return float4((colour>>16)&255,(colour>>8)&255,colour&255,colour>>24)/255.0;
 }
 
-float4 bilinear(Draw d, int page, int level, float u, float v)
+float4 bilinear(Draw d, int page, int level, float u, float v, float sun=1)
 {
-    if (d.flags & F_MODEL2) return model2_sample(d,u,v);
+    if (d.flags & F_MODEL2) return model2_sample(d,u,v,sun);
 	const float sw = float(d.tw >> level), sh = float(d.th >> level);
 	const int px = d.tx >> level, py = d.ty >> level;
 	float u0, u1, v0, v1;
@@ -249,22 +257,24 @@ FsOut main(PolyV i)
 #endif
 	const Draw d = draws.Load<Draw>(i.draw * sizeof(Draw));
 	const Vp vp = vps.Load<Vp>(d.vp * sizeof(Vp));
-	float4 t = 1;
+	bool model2_light = (d.flags & F_MODEL2) && (uint(d.ty) & 0x20000);
+    float model2_sun = model2_light ? clamp(dot(vp.sun.xyz,i.normal),0.0,1.0) : 1.0;
+    float4 t = 1;
 	if (d.flags & F_TEXTURED) {
 		const int page = d.page;
 		float lod = -log2(wi * wi * i.lodbase);
 		float fl = clamp(lod, 0.0, d.levels);
 		if (!(fl == fl)) fl = 0;
 		int il = int(fl);
-		t = bilinear(d, page, il, i.misc.x, i.misc.y);
+		t = bilinear(d, page, il, i.misc.x, i.misc.y, model2_sun);
 		float fr = fl - il;
-		if (fr > 0) t = lerp(t, bilinear(d, page, il + 1, i.misc.x, i.misc.y), fr);
+		if (fr > 0) t = lerp(t, bilinear(d, page, il + 1, i.misc.x, i.misc.y, model2_sun), fr);
 		if (d.flip > 0) {   // a flipbook's step faded in: the step before's picture mixed in
 			Draw o = d;
 			o.tx = d.flip_x;
 			o.ty = d.flip_y;
-			float4 f = bilinear(o, page, il, i.misc.x, i.misc.y);
-			if (fr > 0) f = lerp(f, bilinear(o, page, il + 1, i.misc.x, i.misc.y), fr);
+			float4 f = bilinear(o, page, il, i.misc.x, i.misc.y, model2_sun);
+			if (fr > 0) f = lerp(f, bilinear(o, page, il + 1, i.misc.x, i.misc.y, model2_sun), fr);
 			t = lerp(t, f, d.flip);
 		}
 		if (d.flags & F_INVERTED) t.rgb = 1 - t.rgb;
@@ -307,7 +317,7 @@ FsOut main(PolyV i)
 		else sun = dot(vp.sun.xyz, i.normal);
 		sun = clamp(sun, -1.0, 1.0);
 		if (vp.light.y > 0 || c.a < 0.999) sun = max(sun, 0.0);
-		float li = min(sun * vp.sun.w + vp.light.x, 1.0);
+		float li = model2_light ? 1.0 : min(sun * vp.sun.w + vp.light.x, 1.0);
 		float3 l3 = li + vp.spot_colour.rgb * lobe;
 		c.rgb *= l3;
 		if (d.flags & F_SPECULAR) {

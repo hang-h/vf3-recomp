@@ -425,10 +425,10 @@ struct Sampler
 		y &= 1023 >> level;
 		return decode(mesh->format, tex[size_t(page * 1024 + mip_y[level] + y) * 2048 + mip_x[level] + x]);
 	}
-	C4 bilinear(int level, float u, float v) const
+	C4 bilinear(int level, float u, float v, float sun=1) const
 	{
 		if (mesh->model2_texture) {
-			const auto c = mesh->model2_texture->sample(u,v);
+			const auto c = mesh->model2_texture->sample(u,v,sun);
 			return { ((c>>16)&255)/255.f, ((c>>8)&255)/255.f, (c&255)/255.f, (c>>24)/255.f };
 		}
 		const float sw = float(mesh->width >> level), sh = float(mesh->height >> level);
@@ -524,6 +524,10 @@ void Raster::draw_tri(const Tri &T, int layer, int band0, int band1)
 					continue;
 				}
 				// ---- texture ----
+				const bool model2_light=mesh.model2_texture &&
+					(mesh.model2_texture->flags&Model2Texture::NativeLighting);
+				const float model2_sun=model2_light ?
+					std::clamp(vp.sun[0]*a[3]+vp.sun[1]*a[4]+vp.sun[2]*a[5],0.f,1.f) : 1.f;
 				C4 t = { 1, 1, 1, 1 };
 				if (mesh.textured) {
 					float lod = -std::log2(wi * wi * a[10]);
@@ -532,9 +536,9 @@ void Raster::draw_tri(const Tri &T, int layer, int band0, int band1)
 					int il = int(fl);
 					float fr = fl - il;
 					auto sample = [&](const Sampler &sm) {
-						C4 t1 = sm.bilinear(il, a[6], a[7]);
+						C4 t1 = sm.bilinear(il, a[6], a[7], model2_sun);
 						if (fr > 0) {
-							C4 t2 = sm.bilinear(il + 1, a[6], a[7]);
+							C4 t2 = sm.bilinear(il + 1, a[6], a[7], model2_sun);
 							t1 = { t1.r + (t2.r - t1.r) * fr, t1.g + (t2.g - t1.g) * fr, t1.b + (t2.b - t1.b) * fr, t1.a + (t2.a - t1.a) * fr };
 						}
 						return t1;
@@ -586,7 +590,7 @@ void Raster::draw_tri(const Tri &T, int layer, int band0, int band1)
 					sun = std::clamp(sun, -1.0f, 1.0f);
 					if (sun_clamp || c.a < 0.999f) sun = std::max(sun, 0.0f);
 					// the sun and ambient light up to full, the spotlight's colour on top
-					float li = std::min(sun * vp.sun_intensity + vp.ambient, 1.0f);
+					float li = model2_light ? 1.0f : std::min(sun * vp.sun_intensity + vp.ambient, 1.0f);
 					float lr = li + vp.spot_colour[0] * lobe;
 					float lg = li + vp.spot_colour[1] * lobe;
 					float lb = li + vp.spot_colour[2] * lobe;

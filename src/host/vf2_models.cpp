@@ -40,13 +40,14 @@ struct Decoder {
     };
     bool textured=false;
     std::shared_ptr<Materials> materials=std::make_shared<Materials>();
-    mutable std::map<std::array<unsigned,5>,unsigned> material_cache;
+    mutable std::map<std::array<unsigned,6>,unsigned> material_cache;
     struct PreparedFace {
         std::array<uint16_t,4> header{};
         std::array<Point,3> points{};
         std::array<UV,3> uv{};
         unsigned limit=0;
         bool detail=false;
+        unsigned shading=31;
         Mesh fixed;
     };
     struct Fragment { size_t address; std::shared_ptr<const std::vector<uint8_t>> data; };
@@ -55,12 +56,12 @@ struct Decoder {
     std::vector<uint16_t> sheet;
     unsigned head_descriptor = 0x19c;
     unsigned native_actor = 0;
-    unsigned material(const std::array<uint16_t,4> &h,bool detail) const {
-        const std::array<unsigned,5> header={h[0],h[1],h[2],h[3],unsigned(detail)};
+    unsigned material(const std::array<uint16_t,4> &h,bool detail,unsigned shading=31) const {
+        const std::array<unsigned,6> header={h[0],h[1],h[2],h[3],unsigned(detail),shading};
         if(const auto found=material_cache.find(header);found!=material_cache.end())return found->second;
         auto tile=std::make_shared<Model2Texture>();
         tile->width=32u<<(h[0]&7);tile->height=32u<<((h[0]>>3)&7);
-        tile->flags=h[0]|(detail?0x10000:0);
+        tile->flags=h[0]|(detail?0x10000:0)|Model2Texture::NativeLighting;
         if(tile->width>1024 || tile->height>1024 || !(h[2]&0x1000))
             throw std::runtime_error("invalid VF2 material tile");
         const auto pal=half(Main,0x100000+2*((h[3]>>6)&1023));
@@ -76,6 +77,31 @@ struct Decoder {
             if(at>=sheet.size())throw std::runtime_error("VF2 material outside atlas");
             tile->words.push_back((sheet[at]>>(((~sy&1)<<3)+((~sx&1)<<2)))&15);
         }
+        // Native material parameters (i960 ROM table): diffuse, ambient and
+        // specular. Keep the source ambient/diffuse response, using VF3's sun
+        // direction. Lighting must precede the nonlinear skin/costume lookup.
+        const unsigned parameters=word(CPU,0x118f0+(shading&31)*4);
+        const unsigned maximum=std::min(255u,(parameters&255)+((parameters>>8)&255));
+        const auto channels=std::array<unsigned,3>{pal&31u,(pal>>5)&31u,(pal>>10)&31u};
+        for(unsigned luma=0;luma<64;++luma) {
+            uint32_t rgb=0xff000000u;
+            for(unsigned axis=0;axis<3;++axis) {
+                const unsigned c=channels[axis];
+                // Slots 7..27 at luma >=48 belong to other native palette banks;
+                // this material must never address them (checked below).
+                const unsigned value=luma>=48 && c>6 && c<28 ? 0 : channel(c,axis,luma);
+                rgb|=value<<(16-axis*8);
+            }
+            tile->words.push_back(rgb);
+        }
+        for(unsigned i=0;i<128;++i) {
+            const unsigned luma=*bytes(CPU,0x78d10+(h[1]&255)*128+i,1);
+            if(luma*maximum/256>=48 && std::any_of(channels.begin(),channels.end(),
+                [](unsigned c){return c>6 && c<28;}))
+                throw std::runtime_error("VF2 material addresses unsupported high-luma bank");
+            tile->words.push_back(luma);
+        }
+        tile->words.push_back(parameters);
         auto key=tile->words;key.push_back(tile->width);key.push_back(tile->height);key.push_back(tile->flags);
         auto [it,inserted]=materials->ids.emplace(std::move(key),unsigned(materials->textures.size()+1));
         if(inserted)materials->textures.push_back(std::move(tile));
@@ -118,7 +144,7 @@ struct Decoder {
         // slopes 37 and gains 128. i960 754..9e8 selects each native fighter's
         // skin/costume curves and high-luma eye, mouth and hair colours. Reading
         // actor zero's tables for everyone turns Shun's white beard red/black.
-        // The destination renderer supplies the changing lighting.
+        // The destination renderer applies lighting before indexing these curves.
         unsigned value=0;
         if(index==28 || index==29) {
             const int raw=half(Main,0x101000+native_actor*0x300+(index-28)*0x180+axis*0x80+luma*2);
@@ -211,12 +237,12 @@ struct Decoder {
         if(out.size()>100000) throw std::runtime_error("oversized VF2 model");
     }
     void face(Mesh &out,const std::array<uint16_t,4> &h,const Point &a,const Point &b,const Point &c,
-              const UV &ua,const UV &ub,const UV &uc,unsigned depth,unsigned limit,bool detail=false) const {
+              const UV &ua,const UV &ub,const UV &uc,unsigned depth,unsigned limit,bool detail=false,unsigned shading=31) const {
         if(textured) {
             const size_t first=out.size();
             triangle(out,(h[0]&0x4000)?0xffffffffu:colour(h,ua),a,b,c);
             if(out.size()!=first && (h[0]&0x4000)) {
-                out.back().material=material(h,detail);out.back().uv={ua,ub,uc};
+                out.back().material=material(h,detail,shading);out.back().uv={ua,ub,uc};
             }
             return;
         }
@@ -320,12 +346,12 @@ struct Decoder {
                     const float lift=.0002f*std::max(layer,unsigned(detail));
                     for(unsigned k=0;k<3;++k) {p[k]-=lift*normal[k];q[k]-=lift*normal[k];r[k]-=lift*normal[k];}
                     const size_t begin=out.size();
-                    face(out,h,p,q,r,up,uq,ur,0,limit,detail);
+                    face(out,h,p,q,r,up,uq,ur,0,limit,detail,(attr>>18)&31);
                     if(prepared) {
                         const unsigned x=(h[2]&63)*32,y=((h[2]>>6)&31)*32;
                         const unsigned height=32u<<((h[0]>>3)&7);
                         const bool dynamic=(h[0]&0x4000) && x<192 && y<832 && y+height>768;
-                        if(dynamic)prepared->push_back({h,{p,q,r},{up,uq,ur},limit,detail,{}});
+                        if(dynamic)prepared->push_back({h,{p,q,r},{up,uq,ur},limit,detail,(attr>>18)&31,{}});
                         else {
                             if(prepared->empty() || prepared->back().limit)prepared->push_back({});
                             auto &fixed=prepared->back().fixed;
@@ -467,8 +493,8 @@ void faces(const Decoder &source,vf1_models::Assets &out) {
     for(unsigned descriptor:descriptors)source.part(descriptor,3,&recipe->heads[descriptor]);
     // Baking needs only colour curves and luminance tables after preparation.
     // The final callback retains neither these ROM slices nor the atlas.
-    for(const auto &[region,begin,end]:std::array<std::array<size_t,3>,2>{{
-        {Main,0x100000,0x108000},{CPU,0x78d10,0x79510}}}) {
+    for(const auto &[region,begin,end]:std::array<std::array<size_t,3>,3>{{
+        {Main,0x100000,0x108000},{CPU,0x118f0,0x11970},{CPU,0x78d10,0x79510}}}) {
         const auto *data=source.bytes(int(region),begin,end-begin);
         recipe->decoder.fragments[region].push_back({begin,
             std::make_shared<const std::vector<uint8_t>>(data,data+end-begin)});
@@ -493,7 +519,7 @@ void faces(const Decoder &source,vf1_models::Assets &out) {
         append(group.side);
         for(const auto &face:group.faces) {
             if(group.side) {
-                append(face.header);append(face.points);append(face.uv);append(face.limit);append(face.detail);
+                append(face.header);append(face.points);append(face.uv);append(face.limit);append(face.detail);append(face.shading);
             } else for(const auto &triangle:face.fixed) {
                 append(triangle.colour);append(triangle.points);append(triangle.material);append(triangle.uv);
             }
@@ -537,7 +563,7 @@ void faces(const Decoder &source,vf1_models::Assets &out) {
                     }
                     for(const auto &face:group.faces)
                         baker.face(mesh,face.header,face.points[0],face.points[1],face.points[2],
-                                   face.uv[0],face.uv[1],face.uv[2],0,face.limit,face.detail);
+                                   face.uv[0],face.uv[1],face.uv[2],0,face.limit,face.detail,face.shading);
                 } else for(const auto &face:group.faces)mesh.insert(mesh.end(),face.fixed.begin(),face.fixed.end());
                 Packed packed{unsigned(mesh.size()),{}};
                 if(!mesh.empty()) {

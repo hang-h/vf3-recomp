@@ -10,10 +10,22 @@
 #include <vector>
 
 struct Model2Texture {
+    static constexpr unsigned NativeLighting=0x20000;
     unsigned width=0,height=0,flags=0;
     // 128 ARGB colours, followed by width*height four-bit indices as words.
     std::vector<uint32_t> words;
-    uint32_t sample(float u,float v) const {
+    // NativeLighting appends 64 RGB curve entries, 128 texel luminances,
+    // then the source diffuse/ambient parameter word after the index tile.
+    uint32_t colour(unsigned lookup,float sun) const {
+        if(!(flags&NativeLighting))return words[lookup];
+        const size_t base=128+size_t(width)*height;
+        const unsigned parameters=words[base+192];
+        const unsigned light=unsigned(std::clamp(std::max(sun,0.f)*(parameters&255)+
+            ((parameters>>8)&255),0.f,255.f));
+        const unsigned luma=std::min(words[base+64+lookup]*light/256,63u);
+        return words[base+luma];
+    }
+    uint32_t sample(float u,float v,float sun=1) const {
         auto axis=[](float coordinate,unsigned size,bool mirror,bool wrap) {
             int fixed=int(coordinate*256);
             if(mirror && (fixed&int(size<<8)))fixed=~fixed;
@@ -32,7 +44,7 @@ struct Model2Texture {
             if((flags&0x100) && (x&width))x=~x;
             if((flags&0x200) && (y&height))y=~y;
             const auto index=texel(x,y);
-            return (flags&0x2000) && index==15 ? 0 : words[index*8];
+            return (flags&0x2000) && index==15 ? 0 : colour(index*8,sun);
         }
         const auto x=axis(u,width,flags&0x100,(flags&0x40) && !(flags&0x100));
         const auto y=axis(v,height,flags&0x200,(flags&0x80) && !(flags&0x200));
@@ -44,6 +56,6 @@ struct Model2Texture {
         a=lerp(a,b,x[2]);c=lerp(c,d,x[2]);
         if(a==240)a=c&255;if(c==240)c=a&255;
         const auto value=lerp(a,c,y[2]);
-        return value<0x00400000 ? 0 : words[(value&255)>>1];
+        return value<0x00400000 ? 0 : colour((value&255)>>1,sun);
     }
 };
