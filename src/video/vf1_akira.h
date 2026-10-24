@@ -44,7 +44,7 @@ private:
     struct FaceCacheEntry {uint32_t frame=0; uint64_t used=0; Meshes meshes;};
     mutable std::array<FaceCacheEntry,4> face_cache{};
     mutable uint64_t face_clock=0;
-    unsigned roster_fighter=0;
+    unsigned roster_fighter=0, source_outfit=0;
     std::array<Meshes, size_t(vf1_models::Part::Count)> parts;
     std::array<std::array<Meshes,32>,2> hands;
     std::vector<vf1_models::Strand> ribbons;

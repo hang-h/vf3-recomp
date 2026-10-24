@@ -19,6 +19,11 @@ video::Viewport preview(unsigned fighter,unsigned outfit,unsigned table)
         model.matrix=video::Mat4::identity();model.meshes=std::make_shared<std::vector<video::Mesh>>(1);
         view.models.push_back(std::move(model));
     }
+    if(fighter==0)for(unsigned segment=0;segment<3;++segment) {
+        video::Model ribbon;ribbon.source_node=(outfit?0x76fb0:0x512b0)+segment*8;
+        ribbon.matrix_index=uint16_t(104+segment*2);ribbon.matrix=video::Mat4::identity();
+        ribbon.meshes=std::make_shared<std::vector<video::Mesh>>();view.models.push_back(std::move(ribbon));
+    }
     return view;
 }
 uint64_t geometry_hash(const video::Meshes &meshes)
@@ -78,12 +83,6 @@ int main(int argc,char **argv)
         fighter_expression::Tracker expressions;
         for(unsigned tick=0;tick<200;++tick)expressions.update(fighter_expression::snapshot(ram));
         video::Scene hover;hover.viewports={preview(0,0,20)};
-        for(unsigned segment=0;segment<3;++segment) {
-            video::Model ribbon;ribbon.source_node=0x512b0+segment*8;
-            ribbon.matrix_index=uint16_t(104+segment*2);ribbon.matrix=video::Mat4::identity();
-            ribbon.meshes=std::make_shared<std::vector<video::Mesh>>();
-            hover.viewports[0].models.push_back(std::move(ribbon));
-        }
         auto neutral_hover=hover;
         require(vf2.apply(neutral_hover,0,1,0)==1 &&
                 vf2.apply(hover,0,1,0,expressions.poses())==1,"Akira hover preview missing");
@@ -114,6 +113,64 @@ int main(int argc,char **argv)
         for(unsigned player=0;player<2;++player) {
             require(mixed.viewports[player].models[1].meshes->empty(),"original face was not suppressed");
             require(mixed.viewports[player].models[2].meshes==original.viewports[player].models[2].meshes,"unrelated model changed");
+        }
+        // The destination costume, not the player side, chooses source assets.
+        // Compare the live cache with explicit native loads for every costume,
+        // including animated heads and opposite-costume mirror matches.
+        for(unsigned source=1;source<=2;++source)for(unsigned fighter=0;fighter<(source==1?8u:10u);++fighter) {
+            auto &cache=source==1?vf1:vf2;
+            std::array<video::Vf1Akira,2> expected;
+            std::array<vf1_models::Assets,2> assets;
+            for(unsigned outfit=0;outfit<2;++outfit) {
+                const bool ok=source==1?vf1_models::load(argv[source],assets[outfit],error,fighter,outfit):
+                    vf2_models::load(argv[source],assets[outfit],error,fighter,true,outfit);
+                require(ok,error.c_str());require(assets[outfit].outfit==outfit,"source costume metadata lost");
+                require(expected[outfit].load_assets(assets[outfit],source==1?video::AkiraSource::VF1:
+                    video::AkiraSource::VF2,error,fighter),error.c_str());
+                expected[outfit].enabled=true;
+                const auto &a=assets[outfit];
+                for(const auto &part:a.parts)require(!part.empty(),"costume body part missing");
+                for(const auto &hand:a.hands)for(const auto &pose:hand)require(!pose.empty(),"costume hand pose missing");
+                if(source==2)for(unsigned frame=0;frame<a.face_frame_count;++frame)
+                    require(!a.decode_face(frame).empty(),"costume facial frame missing");
+                if(source==2 && fighter==5)
+                    require(a.detachable_head.empty()==bool(outfit),"Kage costume item policy lost");
+            }
+            for(unsigned state=0;state<4;++state) {
+                fighter_expression::Poses poses{};
+                video::Scene actual;actual.viewports={preview(fighter,0,30),preview(fighter,1,31)};
+                auto reference=actual;
+                for(unsigned outfit=0;outfit<2;++outfit) {
+                    auto &pose=poses[outfit];pose.valid=true;
+                    pose.actor=uint8_t(fighter_roster::game_ids[fighter]+13*outfit);
+                    // Selection, active speech and closed-eye states exercise
+                    // the source costume's independently cached facial banks.
+                    pose.kind=state==0?fighter_expression::Kind::Selection:fighter_expression::Kind::Victory;
+                    pose.tick=12;pose.speaking=state==1;pose.mouth_open=state==1?.8f:0;pose.blink=state>=2?state-1:0;
+                    std::array<uint16_t,2> frames{};
+                    frames[outfit]=expected[outfit].expression_frame(pose);
+                    require(expected[outfit].apply(reference,0,1u<<outfit,frames)==1,"explicit costume preview failed");
+                }
+                require(cache.apply(actual,0,3,fighter,poses)==2,"same-source costume mirror failed");
+                std::set<uint64_t> p1_keys;
+                for(unsigned outfit=0;outfit<2;++outfit) {
+                    const auto &meshes=actual.viewports[outfit].models[0].meshes;
+                    require(geometry_hash(meshes)==geometry_hash(reference.viewports[outfit].models[0].meshes),
+                            "runtime cache used the wrong source costume or expression");
+                    for(const auto &mesh:*meshes) {
+                        if(!outfit)p1_keys.insert(mesh.key);
+                        else require(!p1_keys.count(mesh.key),"source costumes share GPU mesh identity");
+                    }
+                    require(actual.viewports[outfit].models[1].meshes->empty(),"costume preview restored native face");
+                }
+            }
+            // Bad requests must preserve a successfully decoded alternate.
+            auto preserved=assets[1].parts[0].size();
+            require(!(source==1?vf1_models::load(argv[source],assets[1],error,fighter,2):
+                vf2_models::load(argv[source],assets[1],error,fighter,true,2)),"invalid source costume accepted");
+            require(assets[1].outfit==1 && assets[1].parts[0].size()==preserved,"invalid costume destroyed assets");
+            std::printf("VF%u fighter %u: both native costumes, facial banks and mirror cache verified\n",source,fighter);
+            std::fflush(stdout);
         }
         vf1.enabled=false;
         video::Scene disabled;disabled.viewports.push_back(preview(4,0,12));

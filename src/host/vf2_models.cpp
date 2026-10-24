@@ -56,6 +56,7 @@ struct Decoder {
     std::vector<uint16_t> sheet;
     unsigned head_descriptor = 0x19c;
     unsigned native_actor = 0;
+    unsigned outfit = 0; // Palette banks have 12 rows; accessory actors use a stride of 13.
     unsigned material(const std::array<uint16_t,4> &h,bool detail,unsigned shading=31) const {
         const std::array<unsigned,6> header={h[0],h[1],h[2],h[3],unsigned(detail),shading};
         if(const auto found=material_cache.find(header);found!=material_cache.end())return found->second;
@@ -147,11 +148,11 @@ struct Decoder {
         // The destination renderer applies lighting before indexing these curves.
         unsigned value=0;
         if(index==28 || index==29) {
-            const int raw=half(Main,0x101000+native_actor*0x300+(index-28)*0x180+axis*0x80+luma*2);
+            const int raw=half(Main,0x101000+(native_actor+12*outfit)*0x300+(index-28)*0x180+axis*0x80+luma*2);
             value=unsigned(std::max(raw-52,0));
         } else if(index<28 && luma>=48) {
             if(index>6)throw std::runtime_error("unsupported VF2 high-luma palette channel");
-            const int raw=half(Main,0x105800+native_actor*0x2a0+index*0x60+axis*0x20+(luma-48)*2);
+            const int raw=half(Main,0x105800+(native_actor+12*outfit)*0x2a0+index*0x60+axis*0x20+(luma-48)*2);
             value=unsigned(std::max(raw-52,0));
         } else if(index<28 && index && luma) {
             value=64+((luma*(37*index*28/18))>>8);
@@ -383,6 +384,7 @@ void faces(const Decoder &source,vf1_models::Assets &out) {
     };
     auto recipe=std::make_shared<Recipe>();
     recipe->decoder.native_actor=source.native_actor;
+    recipe->decoder.outfit=source.outfit;
     recipe->decoder.textured=source.textured;recipe->decoder.materials=source.materials;
     recipe->decoder.sheet=source.sheet;
     std::map<Key,unsigned> bank;
@@ -443,7 +445,7 @@ void faces(const Decoder &source,vf1_models::Assets &out) {
                     phase[side]=remaining?phase[side]+(target[side]-phase[side])/remaining:target[side];
                 const unsigned frame=unsigned(phase[0])*count/1001;
                 const unsigned index=*source.bytes(Main,mouth+8+frame,1);
-                const unsigned descriptor=source.word(Main,descriptors+index*16);
+                const unsigned descriptor=source.word(Main,descriptors+index*16+source.outfit*4);
                 if(group!=0xffff) {
                     patches[0]=patch(group,frame,true);
                     const size_t eyes=pointer(source.word(Main,at+12));
@@ -464,7 +466,7 @@ void faces(const Decoder &source,vf1_models::Assets &out) {
     const size_t aliases=pointer(source.word(Main,sequence+4));
     for(unsigned state=0;state<3;++state) {
         const unsigned index=*source.bytes(Main,sequence+8+state,1);
-        out.face_states[state]=add({source.word(Main,aliases+index*16),0,0});
+        out.face_states[state]=add({source.word(Main,aliases+index*16+source.outfit*4),0,0});
     }
     // A cross-game aperture lookup, separate from the untouched native scripts.
     // Script 1 includes closing passes (and Akira opens twice), so its phase is
@@ -485,7 +487,7 @@ void faces(const Decoder &source,vf1_models::Assets &out) {
     for(unsigned step=1;step<=16;++step) {
         const unsigned frame=first+(step*(last-first)+8)/16;
         const unsigned index=*source.bytes(Main,speech+8+frame,1);
-        out.face_speech.push_back(add({source.word(Main,speech_descriptors+index*16),
+        out.face_speech.push_back(add({source.word(Main,speech_descriptors+index*16+source.outfit*4),
                                      patch(speech_group,frame,true),0}));
     }
     // Prepare exact painter-order geometry once per native jaw/UV alias.
@@ -495,7 +497,7 @@ void faces(const Decoder &source,vf1_models::Assets &out) {
     // Baking needs only colour curves and luminance tables after preparation.
     // The final callback retains neither these ROM slices nor the atlas.
     for(const auto &[region,begin,end]:std::array<std::array<size_t,3>,3>{{
-        {Main,0x100000,0x108000},{CPU,0x118f0,0x11970},{CPU,0x78d10,0x79510}}}) {
+        {Main,0x100000,0x109700},{CPU,0x118f0,0x11970},{CPU,0x78d10,0x79510}}}) {
         const auto *data=source.bytes(int(region),begin,end-begin);
         recipe->decoder.fragments[region].push_back({begin,
             std::make_shared<const std::vector<uint8_t>>(data,data+end-begin)});
@@ -694,8 +696,9 @@ void akira_blinks(vf1_models::Assets &out) {
 }
 
 }
-bool load(const std::string &path,vf1_models::Assets &out,std::string &error,unsigned fighter,bool textured) {
+bool load(const std::string &path,vf1_models::Assets &out,std::string &error,unsigned fighter,bool textured,unsigned outfit) {
     try {
+        if(outfit>1)throw std::runtime_error("unsupported VF2 costume");
         if(fighter>=10)throw std::runtime_error("unsupported VF2 fighter");
         rom_zip::zip z;if(!z.open(path))throw std::runtime_error("cannot read VF2 ZIP");
         Decoder d;
@@ -710,14 +713,17 @@ bool load(const std::string &path,vf1_models::Assets &out,std::string &error,uns
             auto &dest=d.regions[rom.region];
             for(size_t i=0;i<raw.size();i+=2)memcpy(dest.data()+rom.offset+2*i,raw.data()+i,2);
         }
-        // Actual VF2 2.1 P1 records in the shared select order. Pai's default
-        // body comes from the second costume bank; its native actor remains 6.
-        constexpr unsigned records[]={0xec8,0x4858,0x1d08,0x27b8,0x2098,0x1978,0x15e8,0x1258,0x2b48,0x2f68};
+        // VF2 2.1 records in shared select order. Pai's default body is in
+        // the second record bank; palette/accessory slots still use actor 6.
+        constexpr unsigned records[][2]={
+            {0xec8,0x32f8},{0x4858,0x2428},{0x1d08,0x4138},{0x27b8,0x4be8},
+            {0x2098,0x44c8},{0x1978,0x3da8},{0x15e8,0x3a18},{0x1258,0x3688},
+            {0x2b48,0x4f78},{0x2f68,0x5308}};
         constexpr unsigned native_actors[]={0,6,4,7,5,3,2,1,8,10};
-        const unsigned record=records[fighter];
-        d.native_actor=native_actors[fighter];
+        const unsigned record=records[fighter][outfit];
+        d.native_actor=native_actors[fighter];d.outfit=outfit;
         d.sheet=detail::TextureDecoder(d.regions[Main]).fighterSheet(d.word(Main,record+0x370));
-        vf1_models::Assets next;
+        vf1_models::Assets next;next.outfit=outfit;
         constexpr unsigned body_slots[]={1,9,3,4,6,7,10,11,12,13,14,15,2};
         d.head_descriptor=d.word(Main,record+2*4);
         // Bound cached geometry: the head gets three subdivision levels (five
@@ -736,23 +742,7 @@ bool load(const std::string &path,vf1_models::Assets &out,std::string &error,uns
             if(!std::isfinite(value)||std::abs(value)>2)throw std::runtime_error("invalid VF2 skeleton joint");
             next.source_joints[slot][axis]=value;
         }
-        auto strand=[&](vf1_models::Strand &s,uint8_t bone,size_t anchor,size_t descriptors,size_t count) {
-            s.bone=bone;
-            for(unsigned axis=0;axis<3;++axis)s.anchor[axis]=d.scalar(anchor+axis*4);
-            s.segments.resize(count);s.lengths.resize(count);
-            for(size_t i=0;i<count;++i) {
-                s.segments[i]=d.part(d.word(CPU,descriptors+i*0x44),3);
-                s.lengths[i]=d.scalar(descriptors+i*0x44+12);
-                if(s.lengths[i]<=0)throw std::runtime_error("invalid VF2 accessory segment length");
-            }
-        };
-        if(fighter==0) {
-            strand(next.strands[0],2,0x67bd8,0x67c00,5);
-            next.extra_head_ribbons.resize(1);
-            strand(next.extra_head_ribbons[0],2,0x67bd8,0x67d6c,5);
-            strand(next.strands[1],1,0x67a98,0x67ac0,2);
-            strand(next.strands[2],1,0x67b38,0x67b60,2);
-        } else if(fighter==7) {
+        if(fighter==7) {
             // Jacky's authored selection hair shares the head matrix in VF2.
             // The fifteen battle tufts require the original spring transforms;
             // pointing them all upward produces an incorrect narrow crest.
@@ -763,7 +753,7 @@ bool load(const std::string &path,vf1_models::Assets &out,std::string &error,uns
             // VF2's bounded accessory bytecode: 4 starts a chain, 5 appends
             // a segment. Commands 1..3 configure native cloth simulation;
             // the destination uses its own animation and these source meshes.
-            size_t at=d.word(CPU,0x658a4+native_actors[fighter]*4);
+            size_t at=d.word(CPU,0x658a4+(native_actors[fighter]+13*outfit)*4);
             std::vector<vf1_models::Strand> chains;
             vf1_models::Strand current;
             current.segments.clear();current.lengths.clear();
@@ -782,7 +772,10 @@ bool load(const std::string &path,vf1_models::Assets &out,std::string &error,uns
                     finish();
                     const auto bone=d.word(CPU,at+8);
                     if(bone) {
-                        if(bone!=1 && bone!=2 && bone!=9)throw std::runtime_error("unsupported VF2 accessory bone");
+                        // Lion's alternate costume ties two ribbons to his
+                        // left upper arm; the other chains attach to head/waist.
+                        if(bone!=1 && bone!=2 && bone!=9 && !(fighter==9 && outfit==1 && bone==6))
+                            throw std::runtime_error("unsupported VF2 accessory bone");
                         current.bone=uint8_t(bone);
                         for(unsigned axis=0;axis<3;++axis)current.anchor[axis]=d.scalar(at+12+axis*4);
                         attached=true;
@@ -805,14 +798,14 @@ bool load(const std::string &path,vf1_models::Assets &out,std::string &error,uns
                 if(chain.bone==2) {
                     if(next.strands[0].segments.empty())next.strands[0]=std::move(chain);
                     else next.extra_head_ribbons.push_back(std::move(chain));
-                } else if(belts<2)next.strands[1+belts++]=std::move(chain);
+                } else if((chain.bone==1 || chain.bone==9) && belts<2)next.strands[1+belts++]=std::move(chain);
                 else next.extra_strands.push_back(std::move(chain));
             }
         }
-        if(fighter==1 || fighter==5) {
-            // The native item record is empty for the other source costumes.
+        const auto item=d.word(Main,record+0x380)&0xffffff;
+        if((fighter==1 || fighter==5) && d.word(Main,item)) {
+            // Kage P2 and the other fighters have an empty native item record.
             // Pai's bow and Kage's plate have different attached orientations.
-            const auto item=d.word(Main,record+0x380)&0xffffff;
             next.detachable_head=d.part(d.word(Main,item),3);
             float x,z;const auto xb=d.word(Main,item+16),zb=d.word(Main,item+24);
             memcpy(&x,&xb,4);memcpy(&z,&zb,4);

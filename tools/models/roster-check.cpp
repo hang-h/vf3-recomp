@@ -179,16 +179,16 @@ void check(video::Vf1Akira &appearance,const video::Scene &original,unsigned fig
     printf("%s %s frame %u: %zu fighters, %zu changed models, %zu preserved shadows\n",
            fighter_layouts::fighters[fighter].name,source,frame,count,changed,shadows);fflush(stdout);
 }
-void run(unsigned fighter,const char *vf1,const char *vf2,const std::filesystem::path &root)
+void run(unsigned fighter,const char *vf1,const char *vf2,const std::filesystem::path &root,unsigned source_outfit=0)
 {
     video::Vf1Akira first,second;
     std::string error;
     vf1_models::Assets assets;
     if(fighter<8) {
-        require(vf1_models::load(vf1,assets,error,fighter),error);
+        require(vf1_models::load(vf1,assets,error,fighter,source_outfit),error);
         require(first.load_assets(assets,video::AkiraSource::VF1,error,fighter),error);
     }
-    require(vf2_models::load(vf2,assets,error,fighter),error);
+    require(vf2_models::load(vf2,assets,error,fighter,true,source_outfit),error);
     require(second.load_assets(assets,video::AkiraSource::VF2,error,fighter),error);
     assets={};
     const auto output=root/fighter_layouts::fighters[fighter].name;
@@ -224,17 +224,19 @@ void run(unsigned fighter,const char *vf1,const char *vf2,const std::filesystem:
 }
 int main(int argc,char **argv)
 {
-    if(argc!=5 && argc!=6) {
-        fprintf(stderr,"usage: roster-check vf3.zip vf.zip vf2.zip output-directory [fighter 0..9]\n");return 2;
+    if(argc<5 || argc>7) {
+        fprintf(stderr,"usage: roster-check vf3.zip vf.zip vf2.zip output-directory [fighter 0..9] [source outfit 0..1]\n");return 2;
     }
     try {
         std::string error;require(board.load(argv[1],error),error);
         require(recompiler.build(board.cpu,board.program_image()),"native PowerPC recompilation failed");
         board.cpu.rec=&recompiler;raster.resize(video::W,video::H);
         board.on_line=[](unsigned y){if(y==0)tiles.clear();tiles.line(board,y);};
-        const unsigned first=argc==6?std::stoul(argv[5]):0,last=argc==6?first+1:10;
+        const unsigned first=argc>=6?std::stoul(argv[5]):0,last=argc>=6?first+1:10;
         require(first<10,"invalid fighter index");
-        for(unsigned fighter=first;fighter<last;++fighter)run(fighter,argv[2],argv[3],argv[4]);
+        const unsigned outfit=argc==7?std::stoul(argv[6]):0;
+        require(outfit<2,"invalid source outfit");
+        for(unsigned fighter=first;fighter<last;++fighter)run(fighter,argv[2],argv[3],argv[4],outfit);
         return 0;
     } catch(const std::exception &e) {fprintf(stderr,"roster-check: %s\n",e.what());return 1;}
 }

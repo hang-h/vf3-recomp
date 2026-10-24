@@ -49,6 +49,7 @@ struct FaceAnimation {
     int loop_start=-1; // native next-node cycle; otherwise hold the final frame
 };
 struct Assets {
+    unsigned outfit=0; // Native source costume, independent of the player side.
     std::vector<std::shared_ptr<const Model2Texture>> textures;
     // Original skeleton offsets (slots 0..15), used to fit each fighter's limbs.
     std::array<std::array<float,3>,16> source_joints{};
@@ -75,6 +76,6 @@ struct Assets {
     std::vector<uint16_t> face_speech; // original mouth sequence, closed to open
 };
 // Size/CRC-validated, no extracted files or cache; failure leaves out unchanged.
-// Original P1 source geometry and facial frames, with no destination fitting.
-bool load(const std::string &zip, Assets &out, std::string &error, unsigned fighter=0);
+// Original costume geometry and facial frames, with no destination fitting.
+bool load(const std::string &zip, Assets &out, std::string &error, unsigned fighter=0, unsigned outfit=0);
 }

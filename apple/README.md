@@ -71,11 +71,15 @@ Fighting controls work normally. No menu setting is needed or saved.
 
 Only appearance changes; VF3 supplies the moves, game rules and shadows. VF1 and
 VF2 bodies, hands, headband ribbons and belts are decoded from their respective
-ROMs. Finger poses are approximated from VF3. Akira ribbons follow VF3 cloth
-bones; other imported hair and accessory chains currently use a rigid attachment
-without separate cloth simulation. The face stays neutral. Both VF3 outfits use
-the selected game's P1 appearance. The selection screen shows that game's 3D
-head and original ROM portrait, and victory close-ups keep the selected appearance. See [model notes](../tools/models/README.md)
+ROMs. Finger poses are approximated from VF3. Imported hair follows VF3 cloth
+joints; other accessory chains retain their source attachments. Facial expressions
+and speech use the imported game's face data.
+
+Selecting VF3's **2P costume** also selects the **VF1/VF2 2P costume**, including
+its body, hands, face variants, colours and accessories. This follows the selected
+outfit, independently of which player uses it. The selection screen shows that
+game's 3D head and original ROM portrait; victory and result scenes retain the
+selected appearance. See [model notes](../tools/models/README.md)
 for texture/lighting limitations and local verification commands.
 No ROM or extracted model data is distributed with the app.
 For diagnostics, `--vf1-akira` or `--vf2-akira` forces that appearance for all

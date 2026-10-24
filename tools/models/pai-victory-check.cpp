@@ -46,9 +46,9 @@ int main(int argc,char **argv)
         require(recompiler.build(board.cpu,board.program_image()),"PPC recompilation failed");
         board.cpu.rec=&recompiler;board.reset();
         video::Vf1Akira models[2];vf1_models::Assets assets;
-        require(vf1_models::load(argv[2],assets,error,1),error);
+        require(vf1_models::load(argv[2],assets,error,1,winner),error);
         require(models[0].load_assets(assets,video::AkiraSource::VF1,error,1),error);
-        require(vf2_models::load(argv[3],assets,error,1),error);
+        require(vf2_models::load(argv[3],assets,error,1,true,winner),error);
         require(models[1].load_assets(assets,video::AkiraSource::VF2,error,1),error);
         for(auto &model:models)model.enabled=true;
         assets={};raster.resize(video::W,video::H);

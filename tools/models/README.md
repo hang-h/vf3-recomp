@@ -36,7 +36,8 @@ Pai and Kage retain their source detachable ornaments through knockdown and floo
 contact. These use VF3 motion and detachment timing, with source geometry,
 anchors and lengths. VF2 Jacky still uses his authored rigid selection hair;
 his fifteen source battle springs and Lion's short fringe springs are not
-simulated. Both VF3 outfits use the source game's P1 geometry and palette.
+simulated. Each VF3 outfit uses the corresponding native source costume,
+including its geometry, face variants, palette and accessories.
 Unknown/ambiguous skeleton layouts stay original. Visible, recognised limbs are
 replaced even when the camera culls the feet in a victory close-up. The selection
 screen changes both the 3D head and the original ROM portrait in the corresponding roster
@@ -79,7 +80,7 @@ build/bin/roster-check /path/to/vf3.zip /path/to/vf.zip /path/to/vf2.zip build/r
 ```
 
 `roster-check` captures both selection previews and three fight poses for all
-fighters (an optional final index selects one). It checks independent outfit
+fighters (optional arguments select one fighter and its source costume). It checks independent outfit
 masks, original-face removal, shadow preservation, unchanged scene transforms
 and emulated RAM, and disabled/unknown-layout guards. The cache test covers
 scene lifetime after eviction, reload fidelity, failed replacement ROMs and
@@ -791,3 +792,43 @@ build/bin/pai-victory-check /path/to/vf3.zip /path/to/vf.zip /path/to/vf2.zip bu
 ```
 
 ROMs, extracted geometry, textures and replay captures are not distributed.
+
+
+## Native alternate costumes
+
+The VF3 actor's outfit bit selects the same numbered costume in the imported
+source game. VF1 covers eight fighters and VF2 covers ten. Player side does not
+choose the source costume. Each source cache retains two `(fighter, outfit)`
+entries, so mirror matches can retain both native costumes with independent
+expression caches and GPU mesh identities. Portrait artwork is shared.
+
+VF1 reads the original select tables at `fd2f1b + 9 * outfit`, then follows each
+slot through `fd2e8f`. Body, hands, fixed head, facial scripts, ornaments and
+strands all come from that record/slot.
+
+VF2 uses the paired 2.1 character records (Pai's default body comes from the
+second bank). Native i960 code selects facial descriptor column `4 * outfit`
+at `4b74c..4b768`, accessory actor `fighter_id + 13 * outfit` at `6421c`, and
+palette banks with a **12-row** stride at `754..9e8`. The face scripts themselves
+remain keyed by base fighter ID. The descriptor-column instruction was retained
+with REA evidence `ev_ae0f5ad17dd4537a19096ccbb83168191269ec7e484ffa3765d52cec16226e1e`
+(local disassembler output; static evidence, not an observed game trace). These different strides must not be combined.
+Kage's alternate costume has no detachable plate; Lion's alternate ribbons
+attach to upper-arm bone 6. Its ribbons follow that arm in their source rest
+shape, without a separate source cloth simulation.
+
+Local verification (no ROM-derived fixtures are checked in):
+
+```sh
+make -j4 build/bin/fighter-appearances-test build/bin/roster-check
+build/bin/fighter-appearances-test /path/to/vf.zip /path/to/vf2.zip
+# Final argument chooses the imported source costume; 0 is the default.
+build/bin/roster-check /path/to/vf3.zip /path/to/vf.zip /path/to/vf2.zip build/costume-render 6 1
+```
+
+The cache test decodes all 36 source costumes, checks every VF2 facial frame,
+and compares mirror-match previews against independently loaded native assets
+in selection, speech and both blink phases. It also checks costume-specific
+GPU identities and invalid-costume transactional failure. The render tool
+exercises selection, confirmation, both VF3 skeletons, fight poses, native
+shadow preservation and ornament/hair ownership.

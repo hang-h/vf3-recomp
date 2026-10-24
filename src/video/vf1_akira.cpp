@@ -138,6 +138,8 @@ bool Vf1Akira::load(const std::string &zip, std::string &error)
 
 bool Vf1Akira::load_assets(const vf1_models::Assets &assets, AkiraSource source, std::string &error, unsigned fighter)
 {
+    if(assets.outfit>1){error="Unsupported source costume";return false;}
+    source_outfit=assets.outfit;
     if(fighter) return load_fighter_assets(assets,source,error,fighter);
     if(std::any_of(assets.parts.begin(),assets.parts.end(),[](const auto &p){return p.empty();})) {
         error="Akira source is missing a body part";return false;
@@ -148,7 +150,8 @@ bool Vf1Akira::load_assets(const vf1_models::Assets &assets, AkiraSource source,
     // exactly 2048 units per source unit. VF1 needs its per-part length fitting.
     const float units=model2 ? 2048.0f : 2000.0f;
     const float pelvis_x=model2 ? 2048.0f : 2100.0f;
-    const uint64_t key_base=model2 ? 0x5646320000000000ull : 0x5646310000000000ull;
+    const uint64_t key_base=(model2 ? 0x5646320000000000ull : 0x5646310000000000ull) |
+        (uint64_t(source_outfit)<<47);
     decltype(parts) next;
     for (auto b : bindings) {
         if(model2) { b.sx=b.sy=units;b.sz=-units;b.z=0; }
@@ -314,7 +317,7 @@ Meshes Vf1Akira::face_meshes(uint16_t frame,bool without_item) const
     // Each expression has a separate topology identity. Retained scenes own
     // their meshes even after this small conversion cache evicts a frame.
     const uint64_t key=0x5800000000000000ull | (uint64_t(model2_source?2:1)<<52) |
-        (uint64_t(roster_fighter)<<48) | (uint64_t(without_item)<<47);
+        (uint64_t(roster_fighter)<<48) | (uint64_t(without_item)<<47) | (uint64_t(source_outfit)<<54);
     const Binding binding={Part(frame),0,0,unit_scale,unit_scale,head_z_scale,head_z_offset,0};
     vf1_models::Mesh decoded;
     const auto &bank=without_item ? faces_without_item : source_faces;
@@ -473,7 +476,7 @@ bool Vf1Akira::load_fighter_assets(const vf1_models::Assets &assets,AkiraSource 
     constexpr float units=2048;
     const bool model2=source==AkiraSource::VF2;
     source_textures=assets.textures;
-    const uint64_t key=0x5700000000000000ull | (uint64_t(model2?2:1)<<48) | (uint64_t(fighter)<<40);
+    const uint64_t key=0x5700000000000000ull | (uint64_t(model2?2:1)<<48) | (uint64_t(fighter)<<40) | (uint64_t(source_outfit)<<47);
     constexpr unsigned bone[]={0,0,3,4,6,7,10,11,0,13,14,0,0};
     decltype(parts) next;
     for(size_t i=0;i<next.size();++i) {
@@ -510,18 +513,21 @@ bool Vf1Akira::load_fighter_assets(const vf1_models::Assets &assets,AkiraSource 
         if(chain.segments.empty() || chain.segments.size()!=chain.lengths.size() ||
            std::any_of(chain.segments.begin(),chain.segments.end(),[](const auto &m){return m.empty();}))return;
         if(chain.bone==2) {head_chains.push_back(chain);return;}
-        if(chain.bone!=1 && chain.bone!=9)return;
+        if(chain.bone!=1 && chain.bone!=9 && chain.bone!=6)return;
+        const Part attachment=chain.bone==1 ? Part::Torso : chain.bone==6 ? Part::UpperArmB : Part::Pelvis;
+        const float length=assets.source_joints[6][0];
+        const float along=chain.bone==6 && length>.01f ? layout.parts[size_t(attachment)].joint_length/length : units;
         vf1_models::Mesh geometry;
         float distance=0;
         for(size_t s=0;s<chain.segments.size();++s) {
             for(auto t:chain.segments[s]) {
-                for(auto &p:t.points)p={chain.anchor[0]*units+(model2?-distance:distance)-p[1]*units,
+                for(auto &p:t.points)p={(chain.anchor[0]+(model2?-distance:distance)/units-p[1])*along,
                     (chain.anchor[1]+p[0])*units,-(chain.anchor[2]+p[2])*units};
                 geometry.push_back(t);
             }
             distance+=chain.lengths[s]*units;
         }
-        append(next[size_t(chain.bone==1 ? Part::Torso : Part::Pelvis)],geometry,accessory_identity++,key,source_textures);
+        append(next[size_t(attachment)],geometry,accessory_identity++,key,source_textures);
     };
     for(const auto &chain:assets.strands)add_chain(chain);
     for(const auto &chain:assets.extra_head_ribbons)add_chain(chain);
@@ -688,8 +694,8 @@ size_t Vf1Akira::apply_fighter(Scene &scene,unsigned outfit_mask,unsigned previe
                 const unsigned pose=fingers ? unsigned(std::lround(31*std::clamp((openness/fingers+.65f)/1.65f,0.f,1.f))) : 0;
                 wrists[side]->meshes=hands[side][pose];
             }
-            if(detachable_head[outfit])for(auto &v:scene.viewports)if(same_camera(v))for(auto &m:v.models) {
-                if(m.source_node==item_node)m.meshes=item_attached && !faces_without_item.empty() ? empty : detachable_head[outfit];
+            if(item_node)for(auto &v:scene.viewports)if(same_camera(v))for(auto &m:v.models) {
+                if(m.source_node==item_node)m.meshes=!detachable_head[outfit] || (item_attached && !faces_without_item.empty()) ? empty : detachable_head[outfit];
                 if(roster_fighter==1 && outfit && m.source_node==0x5f810)m.meshes=empty;
             }
             ++replaced;
@@ -697,13 +703,13 @@ size_t Vf1Akira::apply_fighter(Scene &scene,unsigned outfit_mask,unsigned previe
         // A fallen ornament can remain on screen while the head is culled.
         // Recognise the matching battle body before replacing that draw; a
         // head-only selection still requires its explicit preview mask.
-        if(detachable_head[outfit] && (outfit_mask&(1u<<outfit))) {
+        if(item_node && (outfit_mask&(1u<<outfit))) {
             bool body=false;
             for(const auto &v:scene.viewports)for(const auto &m:v.models)
                 for(size_t part=0;part<size_t(Part::Head);++part)
                     body |= m.source_node==layout.parts[part].node;
             if(body)for(auto &v:scene.viewports)for(auto &m:v.models) {
-                if(m.source_node==item_node)m.meshes=item_attached && !faces_without_item.empty() ? empty : detachable_head[outfit];
+                if(m.source_node==item_node)m.meshes=!detachable_head[outfit] || (item_attached && !faces_without_item.empty()) ? empty : detachable_head[outfit];
                 if(roster_fighter==1 && outfit && m.source_node==0x5f810)m.meshes=empty;
             }
         }

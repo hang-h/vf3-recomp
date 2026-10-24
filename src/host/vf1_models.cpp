@@ -113,9 +113,10 @@ struct decoder {
 };
 }
 
-bool load(const std::string &path, Assets &out, std::string &error, unsigned fighter)
+bool load(const std::string &path, Assets &out, std::string &error, unsigned fighter, unsigned outfit)
 {
     try {
+        if (outfit > 1) throw std::runtime_error("unsupported VF1 costume");
         if (fighter >= 8) throw std::runtime_error("fighter is not in the VF1 roster");
         rom_zip::zip z;
         if (!z.open(path)) throw std::runtime_error("cannot read ZIP");
@@ -136,11 +137,11 @@ bool load(const std::string &path, Assets &out, std::string &error, unsigned fig
             for (size_t i = 0; i < raw.size(); i += ro.unit)
                 memcpy(dest.data() + ro.offset + (i / ro.unit) * ro.stride, raw.data() + i, ro.unit);
         }
-        // Original P1 records, in the shared roster order (Akira through Jacky).
-        constexpr uint32_t records[] = {
-            0xfd4f99, 0xfd3987, 0xfd2f45, 0xfd3525, 0xfd3b05, 0xfd3231, 0xfd3811, 0xfd49b9
-        };
-        const uint32_t record = records[fighter];
+        // The native select maps each roster entry through a side-specific
+        // costume slot table. Both records include their own faces and hands.
+        const unsigned slot=*d.main_bytes(0xfd2f1b+9*outfit+fighter,1);
+        if(slot>=26)throw std::runtime_error("invalid VF1 costume slot");
+        const uint32_t record=d.word(0xfd2e8f+4*slot);
         struct binding { Part part; uint32_t offset; };
         constexpr binding body[] = {
             {Part::Torso, 0x12}, {Part::Pelvis, 0x32},
@@ -150,6 +151,7 @@ bool load(const std::string &path, Assets &out, std::string &error, unsigned fig
             {Part::UpperLegB, 0x42}, {Part::LowerLegB, 0x46}, {Part::FootB, 0x4a},
         };
         Assets prepared;
+        prepared.outfit=outfit;
         const auto byte = [&](uint32_t at) { return *d.main_bytes(at, 1); };
         const auto real = [&](uint32_t at) {
             const uint32_t bits = d.word(at);
@@ -297,10 +299,6 @@ bool load(const std::string &path, Assets &out, std::string &error, unsigned fig
         // Native dynamic accessories are keyed by costume slot, not record.
         // Keep the first head chain and two pelvis chains in the legacy slots;
         // braids/dreadlocks beyond the first head chain use the variable list.
-        unsigned slot = 26;
-        for (unsigned i = 0; i < 26; ++i)
-            if (d.word(0xfd2e8f + 4 * i) == record) { slot = i; break; }
-        if (slot == 26) throw std::runtime_error("missing VF1 costume slot");
         uint32_t strands = 0;
         bool terminated = false;
         for (unsigned i = 0; i < 15; ++i) {

@@ -7,5 +7,5 @@ namespace vf2_models {
 // ZIP member sizes and CRCs are checked. Failure leaves out unchanged.
 // Runtime keeps original UV triangles and indexed materials. textured=false
 // retains the subdivided-colour reference path for local decoder regressions.
-bool load(const std::string &zip, vf1_models::Assets &out, std::string &error, unsigned fighter=0, bool textured=true);
+bool load(const std::string &zip, vf1_models::Assets &out, std::string &error, unsigned fighter=0, bool textured=true, unsigned outfit=0);
 }
