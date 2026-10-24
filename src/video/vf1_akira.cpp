@@ -211,6 +211,7 @@ bool Vf1Akira::load_assets(const vf1_models::Assets &assets, AkiraSource source,
 void Vf1Akira::load_faces(const vf1_models::Assets &assets)
 {
     source_faces=assets.face_frames;
+    independent_blink=assets.independent_blink;
     face_frame_count=std::max(unsigned(source_faces.size()),assets.face_frame_count);
     decode_face=assets.decode_face;
     face_animations=assets.face_animations;
@@ -249,11 +250,15 @@ uint16_t Vf1Akira::expression_frame(const fighter_expression::Pose &pose) const
 {
     if(!pose.valid)return 0;
     using Kind=fighter_expression::Kind;
+    auto blink=[&](uint16_t frame) {
+        const bool calm=pose.kind==Kind::Neutral || pose.kind==Kind::Selection || pose.kind==Kind::Victory;
+        return independent_blink && calm && pose.blink<=2 ? vf1_models::face_variant::blink(frame,pose.blink) : frame;
+    };
     if(pose.speaking && std::isfinite(pose.mouth_open)) {
         const float open=std::clamp(pose.mouth_open,0.f,1.f);
-        if(open<.02f)return 0;
+        if(open<.02f)return blink(0);
         if(model2_source && !face_speech.empty())
-            return face_speech[size_t(std::lround(open*(face_speech.size()-1)))];
+            return blink(face_speech[size_t(std::lround(open*(face_speech.size()-1)))]);
         if(!model2_source)return face_animation_frame(5,unsigned(std::lround(open*15)));
     }
     // Source script IDs are game-specific. These are visual retargeting
@@ -269,14 +274,16 @@ uint16_t Vf1Akira::expression_frame(const fighter_expression::Pose &pose) const
     }
     case Kind::HurtRecovery: animation=model2_source?9:4;break;
     case Kind::VictoryRecovery: animation=model2_source?2:(roster_fighter==0 || roster_fighter==1 || roster_fighter==4)?2:6;break;
-    case Kind::Neutral: return 0;
+    case Kind::Neutral: return blink(0);
     }
     return face_animation_frame(animation,pose.tick);
 }
 
 Meshes Vf1Akira::face_meshes(uint16_t frame) const
 {
-    if(!frame || frame>=face_frame_count)return parts[size_t(Part::Head)];
+    const unsigned base=frame&vf1_models::face_variant::FrameMask;
+    const unsigned blink=frame>>vf1_models::face_variant::BlinkShift;
+    if(!frame || base>=face_frame_count || blink>2 || (blink && !independent_blink))return parts[size_t(Part::Head)];
     for(auto &entry:face_cache)if(entry.meshes && entry.frame==frame) {
         entry.used=++face_clock;return entry.meshes;
     }

@@ -13,6 +13,7 @@ struct Pose {
     unsigned tick=0;
     bool speaking=false;
     float mouth_open=0;
+    unsigned blink=0; // host cosmetic timer: open / half / closed, not a native morph ID
 };
 using Poses=std::array<Pose,2>;
 
@@ -44,12 +45,25 @@ public:
                 (s.action!=old.action || s.animation!=old.animation || s.animation_frame<old.animation_frame);
             const bool changed=p.valid!=s.valid || p.actor!=s.actor || p.kind!=kind || new_motion;
             p={s.valid,s.actor,kind,changed ? 0u : p.tick<std::numeric_limits<unsigned>::max() ? p.tick+1 : p.tick};
+            // Independent per-player cosmetic clock. It advances once per game
+            // frame, not per render/interpolated picture, and never writes RAM.
+            if(!s.valid || !old.valid || old.actor!=s.actor) {
+                blink_wait[player]=180+73*player;blink_at[player]=6;
+            } else if(blink_at[player]<6)++blink_at[player];
+            else if(--blink_wait[player]==0) {
+                blink_at[player]=0;
+                blink_seed[player]=blink_seed[player]*1664525u+1013904223u;
+                blink_wait[player]=120+(blink_seed[player]>>16)%240;
+            }
+            constexpr unsigned stages[]={1,2,2,2,1,1};
+            p.blink=blink_at[player]<6?stages[blink_at[player]]:0;
             p.speaking=s.native_face_valid;
             p.mouth_open=s.mouth_open;
             previous[player]=s;
         }
     }
 private:
+    std::array<unsigned,2> blink_wait{180,253},blink_at{6,6},blink_seed{42,137};
     Snapshot previous{};
     Poses current{};
 };

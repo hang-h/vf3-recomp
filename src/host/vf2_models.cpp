@@ -601,6 +601,75 @@ void faces(const Decoder &source,vf1_models::Assets &out) {
         return result;
     };
 }
+// Build blink-only eye overlays from source frame differences. Hurt aliases
+// retain their original frown; these new materials are exclusive to blinking.
+void akira_blinks(vf1_models::Assets &out) {
+    const auto decode=out.decode_face;
+    const Mesh neutral=decode(0);
+    auto same=[](const auto &a,const auto &b) {
+        return a.material==b.material && a.uv==b.uv && a.points==b.points && a.colour==b.colour;
+    };
+    std::vector<bool> mouth(neutral.size());
+    for(auto frame:out.face_speech) {
+        const auto mesh=decode(frame);
+        if(mesh.size()!=neutral.size())throw std::runtime_error("VF2 Akira speech topology changed");
+        for(size_t i=0;i<mesh.size();++i)mouth[i]=mouth[i] || !same(mesh[i],neutral[i]);
+    }
+    using Overlay=std::vector<std::pair<size_t,vf1_models::Triangle>>;
+    std::array<Overlay,2> overlays;
+    std::map<std::pair<unsigned,unsigned>,unsigned> combined;
+    auto brows=[&](unsigned brow,unsigned eye) {
+        const auto key=std::make_pair(brow,eye);
+        if(auto it=combined.find(key);it!=combined.end())return it->second;
+        if(!brow || !eye)throw std::runtime_error("VF2 Akira blink lacks a texture");
+        const auto &b=*out.textures.at(brow-1),&e=*out.textures.at(eye-1);
+        if(b.width!=e.width || b.height!=e.height || !(b.flags&0x2000) || b.flags!=e.flags)
+            throw std::runtime_error("VF2 Akira blink texture layout changed");
+        const size_t end=128+size_t(b.width)*b.height;
+        if(!std::equal(b.words.begin(),b.words.begin()+128,e.words.begin()) ||
+           !std::equal(b.words.begin()+end,b.words.end(),e.words.begin()+end,e.words.end()))
+            throw std::runtime_error("VF2 Akira blink palettes differ");
+        auto bands=[](const Model2Texture &t) {
+            auto clear=[&](unsigned y) {
+                for(unsigned x=0;x<t.width;++x)if(t.words[128+y*t.width+x]!=15)return false;
+                return true;
+            };
+            unsigned y=0;while(y<t.height && clear(y))++y;
+            while(y<t.height && !clear(y))++y;
+            const unsigned brow_end=y;
+            while(y<t.height && clear(y))++y;
+            return std::array<unsigned,2>{brow_end,y};
+        };
+        const auto bb=bands(b),eb=bands(e);
+        if(bb[1]>=b.height || eb[1]>=e.height || bb[0]>eb[1])
+            throw std::runtime_error("VF2 Akira eyebrow/eye bands overlap or are absent");
+        auto texture=std::make_shared<Model2Texture>(e);
+        for(unsigned y=0;y<b.height;++y)for(unsigned x=0;x<b.width;++x) {
+            const size_t at=128+y*b.width+x;
+            texture->words[at]=y<bb[0]?b.words[at]:y>=eb[1]?e.words[at]:15;
+        }
+        out.textures.push_back(std::move(texture));
+        const unsigned id=unsigned(out.textures.size());combined.emplace(key,id);return id;
+    };
+    for(unsigned state=0;state<2;++state) {
+        const auto closed=decode(out.face_states[state+1]);
+        if(closed.size()!=neutral.size())throw std::runtime_error("VF2 Akira blink topology changed");
+        for(size_t i=0;i<closed.size();++i)if(!mouth[i] && !same(closed[i],neutral[i])) {
+            auto triangle=closed[i];triangle.material=brows(neutral[i].material,triangle.material);
+            overlays[state].push_back({i,triangle});
+        }
+        if(overlays[state].empty())throw std::runtime_error("VF2 Akira blink has no eye overlay");
+    }
+    out.independent_blink=true;
+    out.decode_face=[decode,overlays=std::move(overlays)](unsigned frame) {
+        const unsigned state=frame>>vf1_models::face_variant::BlinkShift;
+        if(state>2)throw std::out_of_range("invalid VF2 blink variant");
+        auto result=decode(frame&vf1_models::face_variant::FrameMask);
+        if(state)for(const auto &[index,triangle]:overlays[state-1])result.at(index)=triangle;
+        return result;
+    };
+}
+
 }
 bool load(const std::string &path,vf1_models::Assets &out,std::string &error,unsigned fighter,bool textured) {
     try {
@@ -745,6 +814,7 @@ bool load(const std::string &path,vf1_models::Assets &out,std::string &error,uns
         }
         faces(d,next);
         next.textures=std::move(d.materials->textures);
+        if(fighter==0 && textured)akira_blinks(next);
         out=std::move(next);error.clear();return true;
     } catch(const std::exception &e) {error=e.what();return false;}
 }

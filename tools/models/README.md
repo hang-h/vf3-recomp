@@ -654,3 +654,43 @@ Validation for this correction:
 
 Local capture data, the native comparison probe and build logs stay under
 ignored `build/vf2-colour`. No ROMs or decoded assets are committed or bundled.
+
+### Independent VF2 Akira blink
+
+VF2 Akira can now blink without replacing his mouth or frowning. The source's
+79 face recipes and hurt/recovery scripts are unchanged. At load time, the
+half/closed aliases are compared with the neutral head; any triangle changed
+by a speech sample is excluded. For the remaining eye triangles, opaque row
+bands separated by transparency identify eyebrows and eyelids. Four additional
+indexed tiles combine neutral eyebrows with the original half/closed eyelids,
+retaining the source palette, material lighting and transparent gap. No texture
+IDs, eye UV coordinates or cut rows are hardcoded.
+
+Blink variants use the high two bits of a face ID, with the original frame in
+the low fourteen bits. The decoder applies only the small immutable eye overlay
+to the requested source head. The existing bounded head cache owns the result;
+no extra triangles, recurring atlas synthesis or ROM writes are needed. This
+path is enabled only for textured VF2 Akira, whose shared topology is checked.
+Other fighters and the legacy subdivided reference decoder are unchanged.
+
+A per-player host cosmetic timer advances once per emulated game frame and
+plays half, closed, closed, closed, half, half, at roughly 2–6 second intervals.
+This timing is an added visual effect, not a recovered native VF3 blink signal.
+Neutral faces and active speech can use the overlay; hurt, defeat and recovery
+keep their authored expressions. Reading/rendering a pose does not advance the
+clock, and actor changes/reset clear a pending blink.
+
+VF1's centre-distance painter-sort bias is not copied into Real3D. VF3 already
+uses a depth buffer and a small outward lift for source facial decals. Actual
+selection captures verify the open, half-closed and closed eye overlays with
+that existing depth treatment, including a speaking mouth.
+
+Validation: 34 speech/eyelid combinations preserve mouth geometry, neutral
+brows, source palette and player isolation; timer tests cover independent
+players, reads, invalid actors and reset. A 6,500-frame Akira integration run
+passes 302 VF1/VF2 scene checks across selection, combat, speech and results,
+with emulated RAM unchanged. All ten source texture banks and 669 native
+recipes still pass, including ASan/UBSan. macOS, iOS simulator and unsigned iOS
+device builds compile/link; the iOS simulator GPU capture also confirms the
+closed-eye preview. Local probes and screenshots remain in ignored
+`build/vf2-blink`; no ROMs or decoded assets are committed.

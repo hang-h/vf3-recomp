@@ -111,6 +111,22 @@ int main()
         samples[0].preview=true;samples[0].phase=5;tracker.update(samples);
         require(tracker.poses()[0].kind==Kind::Neutral,"hover preview inherited battle hit recovery");
         tracker.reset();require(!tracker.poses()[0].valid,"reset retained actor expression");
+        fighter_expression::Tracker blink_tracker;
+        fighter_expression::Snapshot blinking{};
+        for(auto &sample:blinking){sample.valid=true;sample.actor=0;sample.hp=100;sample.native_face_valid=true;sample.mouth_open=.7f;}
+        bool half_seen=false,closed_seen=false,independent=false;
+        for(unsigned frame=0;frame<1000;++frame) {
+            blink_tracker.update(blinking);const auto &poses=blink_tracker.poses();
+            half_seen|=poses[0].blink==1;closed_seen|=poses[0].blink==2;
+            independent|=poses[0].blink!=poses[1].blink;
+            require(poses[0].speaking && poses[0].mouth_open==.7f,"blink clock changed native speech");
+            const auto before=poses[0].blink;
+            require(blink_tracker.poses()[0].blink==before,"reading pose advanced blink clock");
+        }
+        require(half_seen && closed_seen && independent,"missing independent two-player blink cycle");
+        blinking[0].valid=false;blink_tracker.update(blinking);
+        require(!blink_tracker.poses()[0].blink,"inactive player retained blink");
+        blink_tracker.reset();require(!blink_tracker.poses()[0].blink,"reset retained blink");
         std::puts("Native facial sampling: endian fields, two-player timing, preview ownership, guarded result phases and short RAM passed");
     }catch(const std::exception &e){std::fprintf(stderr,"%s\n",e.what());return 1;}
 }

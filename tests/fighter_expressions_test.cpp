@@ -19,6 +19,12 @@ video::Viewport preview(unsigned fighter,unsigned outfit)
         model.matrix=video::Mat4::identity();model.meshes=std::make_shared<std::vector<video::Mesh>>(1);
         view.models.push_back(std::move(model));
     }
+    if(fighter==0)view.models[2].matrix_index=200;
+    if(fighter==0)for(unsigned segment=0;segment<3;++segment) {
+        video::Model ribbon;ribbon.source_node=(outfit?0x76fb0u:0x512b0u)+segment*8;
+        ribbon.matrix_index=104+segment*2;ribbon.matrix=video::Mat4::identity();
+        ribbon.meshes=std::make_shared<std::vector<video::Mesh>>();view.models.push_back(ribbon);
+    }
     return view;
 }
 uint64_t hash(const video::Meshes &meshes)
@@ -99,6 +105,59 @@ void check(const char *zip,video::AkiraSource source,unsigned fighter)
     std::printf("%s fighter %u: %zu source frames, %zu rendered variants; mirror isolation and cache lifetime passed\n",
                 source==video::AkiraSource::VF1?"VF1":"VF2",fighter,size_t(count),variants.size());
 }
+void check_blink(const char *zip)
+{
+    using namespace vf1_models;
+    Assets a;std::string error;require(vf2_models::load(zip,a,error),error.c_str());
+    require(a.independent_blink && a.face_frame_count==79,"Akira native bank changed");
+    const auto neutral=a.decode_face(0);
+    auto same=[](const Triangle &x,const Triangle &y) {
+        return x.material==y.material && x.points==y.points && x.uv==y.uv && x.colour==y.colour;
+    };
+    video::Vf1Akira model;require(model.load_assets(a,video::AkiraSource::VF2,error),error.c_str());model.enabled=true;
+    unsigned comparisons=0;
+    for(unsigned state:{1u,2u}) {
+        const auto hurt=a.decode_face(a.face_states[state]);
+        for(auto base:a.face_speech) {
+            const auto speaking=a.decode_face(base),blink=a.decode_face(face_variant::blink(base,state));
+            require(blink.size()==speaking.size(),"blink changed triangle count");
+            unsigned eyes=0;
+            for(size_t i=0;i<blink.size();++i) {
+                if(!same(speaking[i],neutral[i]))require(same(blink[i],speaking[i]),"blink overwrote speech geometry or texture");
+                if(same(blink[i],speaking[i]))continue;
+                ++eyes;require(!same(hurt[i],neutral[i]),"blink replaced a non-eye triangle");
+                const auto &b=*a.textures[neutral[i].material-1],&e=*a.textures[hurt[i].material-1],&t=*a.textures[blink[i].material-1];
+                // Each combined pixel must be the neutral brow, the source
+                // eyelid, or transparent, while keeping palette and lighting.
+                bool changed_brow=false,kept_eye=false;
+                for(unsigned y=0;y<t.height;++y)for(unsigned x=0;x<t.width;++x) {
+                    const size_t at=128+y*t.width+x;const auto v=t.words[at];
+                    require(v==15 || v==b.words[at] || v==e.words[at],"blink invented a texel");
+                    changed_brow|=v!=15 && v==b.words[at] && v!=e.words[at];
+                    kept_eye|=v!=15 && v==e.words[at] && v!=b.words[at];
+                }
+                require(changed_brow && kept_eye,"blink failed to combine neutral brow and eyelid");
+            }
+            require(eyes>0,"blink changed no eyes");++comparisons;
+            fighter_expression::Pose pose;pose.valid=true;pose.speaking=true;pose.blink=state;
+            for(unsigned opening=0;opening<=16;++opening) {
+                pose.mouth_open=opening/16.f;
+                const auto selected=model.expression_frame(pose);
+                require((selected>>face_variant::BlinkShift)==state,"speech discarded blink");
+                require((selected&face_variant::FrameMask)==a.face_speech[opening],"blink changed speech aperture");
+            }
+        }
+        fighter_expression::Pose pose;pose.valid=true;pose.blink=state;
+        require(model.expression_frame(pose)==face_variant::blink(0,state),"neutral blink missing");
+        pose.kind=fighter_expression::Kind::Hurt;
+        require(model.expression_frame(pose)==model.face_animation_frame(8,0),"cosmetic blink overrides hurt");
+        video::Scene scene;scene.viewports={preview(0,0),preview(0,1)};
+        require(model.apply(scene,0,3,{face_variant::blink(a.face_speech.back(),state),0})==2,"blink preview failed");
+        require(hash(scene.viewports[0].models[0].meshes)!=hash(scene.viewports[1].models[0].meshes),"blink/speech leaked to opponent");
+    }
+    std::printf("Akira blink: %u speech/eyelid combinations preserve mouth, brows, palettes and player isolation\n",comparisons);
+}
+
 }
 int main(int argc,char **argv)
 {
@@ -106,6 +165,8 @@ int main(int argc,char **argv)
     try {
         if(argc==3 || std::string(argv[3])=="1")check(argv[1],video::AkiraSource::VF1,1);
         if(argc==3 || std::string(argv[3])=="2") {
+            check(argv[2],video::AkiraSource::VF2,0);
+            check_blink(argv[2]);
             check(argv[2],video::AkiraSource::VF2,2);
             check(argv[2],video::AkiraSource::VF2,7);
         }

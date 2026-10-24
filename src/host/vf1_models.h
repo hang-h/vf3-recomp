@@ -22,6 +22,12 @@ struct Triangle {
     std::array<std::array<float,2>,3> uv{}; // source texel coordinates
 };
 using Mesh = std::vector<Triangle>;
+// Virtual face IDs keep the source frame in the low bits. Blink variants are
+// decoded on demand; original source scripts and their frame counts stay intact.
+namespace face_variant {
+constexpr unsigned FrameMask=0x3fff, BlinkShift=14;
+inline uint16_t blink(uint16_t frame,unsigned state) {return uint16_t(frame|((state&3)<<BlinkShift));}
+}
 struct Strand {
     uint8_t bone = 0;
     std::array<float, 3> anchor{};
@@ -59,6 +65,7 @@ struct Assets {
     // Texture-animated sources keep compact immutable recipes instead of
     // baking every combination. The callback owns no emulator or file handle.
     unsigned face_frame_count=0;
+    bool independent_blink=false;
     std::function<Mesh(unsigned)> decode_face;
     std::array<FaceAnimation,10> face_animations; // original source script IDs (VF1: 1..7, VF2: 0..9)
     std::array<uint16_t,3> face_states{}; // native neutral, expression, closed-eye heads
