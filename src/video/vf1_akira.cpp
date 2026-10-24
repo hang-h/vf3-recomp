@@ -440,7 +440,10 @@ size_t Vf1Akira::apply(Scene &scene, unsigned outfit_mask, unsigned preview_mask
                                                      {0x5bee8,0x5bef8,0x5bf00,0x5bf08}};
             const bool face_node=m.source_node==(outfit ? 0x51e48u : 0x50990u) ||
                 std::find(std::begin(reaction_faces[outfit]),std::end(reaction_faces[outfit]),m.source_node)!=std::end(reaction_faces[outfit]);
-            const bool original_face=face_node && slot==(preview ? 1 : 25);
+            // Confirming selection briefly uses four baked face nodes instead
+            // of the live morph node. This validated head-only slot owns all
+            // those variants, including split eyes/mouth on Sarah.
+            const bool original_face=preview ? slot==1 : face_node && slot==25;
             const bool original_belt=m.source_node==(outfit ? 0x430d8u : 0x42f58u) || m.source_node==(outfit ? 0x430c8u : 0x42f48u);
             if (original_face || slot==0 || (slot>=2 && slot<=(preview ? 3 : 8)) ||
                 (replace_ribbon && ribbon_visible && slot>=(preview ? 4 : 9) && slot<=(preview ? 17 : 25)) ||
@@ -666,7 +669,8 @@ size_t Vf1Akira::apply_fighter(Scene &scene,unsigned outfit_mask,unsigned previe
             }
             for(auto &v:scene.viewports)if(same_camera(v))for(auto &m:v.models) {
                 const bool owned=std::find(layout.owned_nodes.begin(),layout.owned_nodes.end(),m.source_node)!=layout.owned_nodes.end();
-                if(owned || m.source_node==layout.face_node)m.meshes=empty;
+                const bool preview_face=preview && int(m.matrix_index)==base+layout.preview_face_slot;
+                if(owned || m.source_node==layout.face_node || preview_face)m.meshes=empty;
             }
             for(size_t i=0;i<found.size();++i)if(found[i])found[i]->meshes=parts[i];
             head.meshes=std::move(with_hair);

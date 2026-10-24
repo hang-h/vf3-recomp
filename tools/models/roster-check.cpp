@@ -127,7 +127,7 @@ void check(video::Vf1Akira &appearance,const video::Scene &original,unsigned fig
            const char *source,const std::filesystem::path &output,std::ofstream &evidence)
 {
     const bool preview=frame<3500;
-    const size_t expected=frame==1750?1:2;
+    const size_t expected=frame<2200?1:2;
     const auto ram_before=ram_hash();
     auto disabled=original;appearance.enabled=false;
     require(appearance.apply(disabled,3,3)==0,"disabled source applied");untouched(original,disabled);
@@ -157,9 +157,14 @@ void check(video::Vf1Akira &appearance,const video::Scene &original,unsigned fig
         if(shadow(a)) {require(!all,"native shadow changed");++shadows;}
         for(const auto &layout:fighter_layouts::fighters[fighter].outfits)
             if(a.source_node==layout.face_node) {require(b.meshes->empty(),"native face overlays source head");++faces;}
+        if(preview)for(const auto &layout:fighter_layouts::fighters[fighter].outfits)
+            for(const auto &vp:original.viewports)for(const auto &head:vp.models)
+                if(head.source_node==layout.head_node && a.matrix_index==head.matrix_index+layout.preview_face_slot &&
+                   original.viewports[v].matrix_table==vp.matrix_table && original.viewports[v].root_matrix==vp.root_matrix)
+                    require(b.meshes->empty(),"confirmation face overlays imported head");
     }
     require(changed>expected,"source changed too few models");
-    if(preview)require(faces>=expected,"preview omitted an animated face");
+    if(preview && (frame==1750 || frame==3080))require(faces>=expected,"preview omitted an animated face");
     if(!preview)require(shadows>0,"fight did not exercise native shadow preservation");
     auto unknown=original;
     for(auto &v:unknown.viewports)for(auto &m:v.models)m.source_node=0;
@@ -203,11 +208,12 @@ void run(unsigned fighter,const char *vf1,const char *vf2,const std::filesystem:
         c.guard[0]=f>=3500&&f<4000;c.guard[1]=f>=3500;c.kick[0]=press(f,4000);
         board.run_frame();
         const auto frame=f+1;
-        if(frame!=1750 && frame!=3080 && frame!=3820 && frame!=3920 && frame!=4120)continue;
+        const bool confirmation=(frame>=1804 && frame<=1807)||(frame>=3104 && frame<=3107);
+        if(!confirmation && frame!=1750 && frame!=3080 && frame!=3820 && frame!=3920 && frame!=4120)continue;
         const unsigned expected_id=fighter_layouts::fighters[fighter].vf3_id;
         if(frame==1750)require(board.read8(0x108042)==expected_id,"P1 selected wrong fighter");
         else if(frame==3080)require(board.read8(0x1080c2)==expected_id+13,"P2 selected wrong fighter");
-        else require(board.read8(0x1087f0)%13==expected_id && board.read8(0x10a7f0)%13==expected_id,
+        else if(!confirmation)require(board.read8(0x1087f0)%13==expected_id && board.read8(0x10a7f0)%13==expected_id,
                      "script did not enter the requested mirror fight");
         video::Scene original;builder.build(board,original);
         picture(original,output/("vf3-"+std::to_string(frame)+".png"));
