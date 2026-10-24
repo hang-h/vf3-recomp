@@ -30,10 +30,13 @@ not a phoneme-for-phoneme transplant of the different facial rigs. Source eyes a
 brows move with their original expression scripts; independent VF3 eye/brow morphs
 are not transplanted. VF1 Kage retains the original concealed mask policy; VF2 Kage
 can animate his visible eyes while keeping the mask.
-Other fighters currently use rigid source hair/accessory chains, without their
-original cloth physics. VF2 Jacky uses his authored rigid selection hair in all
-poses; the original fifteen spring-driven battle tufts are not simulated. Both
-VF3 outfits use the source game's P1 geometry and palette.
+Pai, Lau, Wolf, Jeffry, Kage and Sarah now animate their source head chains
+using the corresponding VF3 hair/ribbon joints; VF2 Shun also animates his beard.
+Pai and Kage retain their source detachable ornaments through knockdown and floor
+contact. These use VF3 motion and detachment timing, with source geometry,
+anchors and lengths. VF2 Jacky still uses his authored rigid selection hair;
+his fifteen source battle springs and Lion's short fringe springs are not
+simulated. Both VF3 outfits use the source game's P1 geometry and palette.
 Unknown/ambiguous skeleton layouts stay original. Visible, recognised limbs are
 replaced even when the camera culls the feet in a victory close-up. The selection
 screen changes both the 3D head and the original ROM portrait in the corresponding roster
@@ -717,3 +720,57 @@ Verification: 64 CPU/Metal comparisons pass. All 140 roster captures pass;
 135 are byte-identical to the preceding colour baseline, with only the five
 VF2 Akira captures changing. macOS, simulator and unsigned device builds
 compile/link, and macOS plus iOS simulator GPU captures show the corrected eyes.
+
+### Detachable ornaments and animated head chains
+
+Source-ROM item tables identify Pai and Kage as the detachable-item owners in
+these imported costumes. VF1 uses record `+0x56`; VF2 uses record `+0x380`.
+Other imported source costumes have empty item entries. Native VF3-only hats
+and bandanas remain suppressed when they do not belong to the source appearance.
+
+- VF1 Pai's uncapped fixed-head component is an exact subset of its capped
+  component. The 214 cap triangles are separated from every facial frame once,
+  so blinking, speaking and damage expressions cannot restore the cap.
+- VF1 Kage changes the entire first fixed-head component after losing the plate.
+  This is not a subset: keep a separate bare-head cache and the source's 190-triangle
+  falling item. The blue hood and concealed-mouth policy remain intact. The
+  falling item's forehead placement is fitted to the VF3 joint; the source's
+  embedded attached plate retains its original geometry.
+- VF2 Pai's bow and Kage's forehead plate are separate native objects. Decode
+  their descriptors and attachment coordinates from the source item table;
+  convert the measured source attachment axes into head space.
+- Map these source items to the native VF3 ornament joints in both outfits.
+  Keep the native matrices, including flight and floor motion. Pai's alternate
+  outfit has an additional native ornament mesh that must be suppressed.
+  A visible fallen item can still be replaced when its fighter's head is culled.
+
+Hair bindings use both matrix slots and mesh-node identities. Repeated nodes
+within and between braids must not accidentally select the other chain's last
+joint. Selection and battle have separate slot offsets. Source segment lengths
+and roots remain unchanged; culled tips retain the previous segment's basis.
+Sarah's VF1 ponytail maps past the two earrings present in VF2, and Jeffry's three
+VF1 locks sample the six native VF3 roots. Jeffry's alternate VF3 outfit has two
+bandana joints rather than six hair roots: their motion is remapped through six
+traced root bases to preserve the spread. These are appearance retargeting
+approximations, not ports of the source games' spring solvers.
+
+Verification uses local player ROMs only:
+
+- Both source decoder suites cover item ownership, finite attachments, cap
+  exclusion from every expression, and Kage's bare-head bank.
+- `roster-check` covers all 140 native/VF1/VF2 selection and fight captures,
+  both outfits, unchanged shadows, model attributes and emulated RAM. It also
+  perturbs cloth joints to check that hair moves without deforming faces or the
+  other player, and moves item joints to verify head-state and cache restoration.
+- Local 6,000-frame Pai/Kage replays show original ornaments attached, falling
+  and on the floor for both source versions. Evidence and temporary REA probes
+  are ignored under `build/source-accessories`.
+- The macOS Metal benchmark covers the seven newly animated fighters in
+  selection and mirror fights. Appearance conversion measured 0.005–0.055 ms
+  per scene on the development Mac; this is not an iOS hardware FPS measurement.
+- macOS, iOS simulator and iOS device incremental compile/link checks pass.
+  The macOS Metal and iOS simulator apps display the VF2 Pai selection preview
+  with the restored bow and animated braids. The simulator uses its CPU fallback;
+  physical-device runtime validation remains outstanding.
+
+ROMs, extracted geometry, textures and replay captures are not distributed.

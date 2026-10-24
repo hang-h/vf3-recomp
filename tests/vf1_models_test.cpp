@@ -22,6 +22,9 @@ bool equal_mesh(const vf1_models::Mesh &a,const vf1_models::Mesh &b)
 bool equal(const vf1_models::Assets &a, const vf1_models::Assets &b)
 {
     if(a.source_joints!=b.source_joints)return false;
+    if(!equal_mesh(a.detachable_head,b.detachable_head) || a.faces_without_item.size()!=b.faces_without_item.size())return false;
+    for(size_t i=0;i<a.faces_without_item.size();++i)
+        if(!equal_mesh(a.faces_without_item[i],b.faces_without_item[i]))return false;
     if(a.face_states!=b.face_states || a.face_speech!=b.face_speech || a.face_frames.size()!=b.face_frames.size() ||
        a.face_frame_count!=b.face_frame_count || bool(a.decode_face)!=bool(b.decode_face))return false;
     for(size_t frame=0;frame<a.face_frames.size();++frame)
@@ -166,7 +169,18 @@ int main(int argc, char **argv)
                         require(std::isfinite(coordinate),"nonfinite facial coordinate");
                 }
             }
+            require(models.detachable_head.empty()==(fighter!=1 && fighter!=5),"incorrect source item ownership");
+            if(fighter==1) {
+                require(models.detachable_head.size()==214,"incomplete source cap");
+                for(const auto &face:models.face_frames)for(const auto &cap:models.detachable_head)
+                    for(const auto &t:face)require(t.colour!=cap.colour || t.points!=cap.points,
+                        "expression restores detached cap");
+            }
             if(fighter==5) {
+                require(models.detachable_head.size()==190,"incomplete source forehead plate");
+                require(models.faces_without_item.size()==models.face_frames.size(),"missing bare head variants");
+                require(models.face_frames[0].size()==models.faces_without_item[0].size()+190,
+                        "detachment removed more than the fixed head plate variant");
                 require(models.face_frames.size()==1,"masked Kage exposes concealed expressions");
             } else {
                 require(models.face_frames.size()>16 && models.face_frames.size()<=114,"collapsed or unbounded facial bank");

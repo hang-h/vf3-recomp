@@ -809,6 +809,19 @@ bool load(const std::string &path,vf1_models::Assets &out,std::string &error,uns
                 else next.extra_strands.push_back(std::move(chain));
             }
         }
+        if(fighter==1 || fighter==5) {
+            // The native item record is empty for the other source costumes.
+            // Pai's bow and Kage's plate have different attached orientations.
+            const auto item=d.word(Main,record+0x380)&0xffffff;
+            next.detachable_head=d.part(d.word(Main,item),3);
+            float x,z;const auto xb=d.word(Main,item+16),zb=d.word(Main,item+24);
+            memcpy(&x,&xb,4);memcpy(&z,&zb,4);
+            if(!std::isfinite(x)||!std::isfinite(z)||std::abs(x)>1||std::abs(z)>1)
+                throw std::runtime_error("invalid VF2 item attachment");
+            for(auto &t:next.detachable_head)for(auto &p:t.points)
+                p=fighter==1 ? std::array<float,3>{-p[1]+x,-p[0],-p[2]+z}
+                             : std::array<float,3>{p[2]+x,-p[0],-p[1]+z};
+        }
         // Original manga-style select icon. The six-by-eleven tile image is
         // embedded in a 62-column map; graphics and BGR555 palette are raw ROM.
         auto &portrait=next.portrait;

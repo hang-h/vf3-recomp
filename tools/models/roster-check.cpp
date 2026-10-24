@@ -68,6 +68,61 @@ void untouched(const video::Scene &a,const video::Scene &b)
     for(size_t v=0;v<a.viewports.size();++v)for(size_t i=0;i<a.viewports[v].models.size();++i)
         require(a.viewports[v].models[i].meshes==b.viewports[v].models[i].meshes,"guard changed meshes");
 }
+// Change a native cloth joint in an otherwise identical retained scene. This
+// catches rigid imports and accidental reuse of the other braid/player's node.
+void accessory_motion(video::Vf1Akira &appearance,const video::Scene &original,
+                      unsigned fighter,unsigned frame,const char *source)
+{
+    const bool preview=frame<3500;
+    auto points=[](const video::Scene &scene,uint32_t node,bool hair) {
+        std::vector<std::array<float,3>> result;
+        for(const auto &v:scene.viewports)for(const auto &m:v.models)if(m.source_node==node)
+            for(const auto &mesh:*m.meshes)if((((mesh.key>>32)&255)==121)==hair)
+                for(const auto &vert:mesh.verts)result.push_back({vert.pos[0],vert.pos[1],vert.pos[2]});
+        return result;
+    };
+    auto base=original;appearance.apply(base,3,preview?3:0);
+    for(unsigned outfit=0;outfit<2;++outfit) {
+        const auto &layout=fighter_layouts::fighters[fighter].outfits[outfit];
+        const auto &other=fighter_layouts::fighters[fighter].outfits[1-outfit];
+        const video::Model *head=nullptr;
+        for(const auto &v:original.viewports)for(const auto &m:v.models)
+            if(m.source_node==layout.head_node)head=&m;
+        if(!head || layout.head_cloth.empty())continue;
+        const size_t chain=fighter==6 && std::string(source)=="vf1" ? 2 : 0;
+        const auto &binding=layout.head_cloth[chain];
+        const int slot=head->matrix_index+(preview?binding.preview_slot:binding.first_slot);
+        auto changed=original;bool found=false;
+        for(auto &v:changed.viewports)for(auto &m:v.models)
+            if(m.matrix_index==slot && (m.source_node==binding.nodes[0] || m.source_node==binding.alternate_nodes[0])) {
+                for(unsigned r=0;r<3;++r) {
+                    const auto x=m.matrix.m[r];m.matrix.m[r]=-m.matrix.m[4+r];m.matrix.m[4+r]=x;
+                }
+                found=true;
+            }
+        require(found,"missing traced hair root");
+        const auto native=changed;appearance.apply(changed,3,preview?3:0);attributes(native,changed);
+        require(points(base,layout.head_node,true)!=points(changed,layout.head_node,true),"hair ignored native joint motion");
+        require(points(base,layout.head_node,false)==points(changed,layout.head_node,false),"hair joint deformed face");
+        require(points(base,other.head_node,true)==points(changed,other.head_node,true),"hair motion crossed player ownership");
+    }
+    if(!preview && (fighter==1 || fighter==5))for(unsigned outfit=0;outfit<2;++outfit) {
+        const uint32_t item=fighter==1?(outfit?0x5f808:0x41768):(outfit?0x512d0:0x46238);
+        const auto head=fighter_layouts::fighters[fighter].outfits[outfit].head_node;
+        auto fallen=original;bool found=false;
+        for(auto &v:fallen.viewports)for(auto &m:v.models)if(m.source_node==item) {
+            m.matrix.m[12]+=1000;found=true;
+        }
+        require(found,"drop fixture missing native item");
+        const auto native=fallen;appearance.apply(fallen,3);attributes(native,fallen);
+        const bool embedded=fighter==5 && std::string(source)=="vf1";
+        require((points(base,head,false)!=points(fallen,head,false))==embedded,
+                "detachment did not preserve the source fixed-head policy");
+        auto restored=original;appearance.apply(restored,3);
+        require(points(base,head,false)==points(restored,head,false),"next attachment retained bare-head cache");
+    }
+}
+
 void check(video::Vf1Akira &appearance,const video::Scene &original,unsigned fighter,unsigned frame,
            const char *source,const std::filesystem::path &output,std::ofstream &evidence)
 {
@@ -110,6 +165,7 @@ void check(video::Vf1Akira &appearance,const video::Scene &original,unsigned fig
     for(auto &v:unknown.viewports)for(auto &m:v.models)m.source_node=0;
     const auto unknown_before=unknown;
     require(appearance.apply(unknown,3,3)==0,"unknown layout accepted");untouched(unknown_before,unknown);
+    if(frame==3080 || frame==3820)accessory_motion(appearance,original,fighter,frame,source);
     require(ram_hash()==ram_before,"appearance changed emulated RAM");
     evidence<<"{\"fighter\":"<<fighter<<",\"source\":\""<<source<<"\",\"frame\":"<<frame
         <<",\"replaced\":"<<count<<",\"changed_models\":"<<changed<<",\"preserved_shadows\":"<<shadows

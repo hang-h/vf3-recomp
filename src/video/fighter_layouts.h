@@ -12,6 +12,13 @@ struct PartBinding {
     int16_t slot = 0; // relative to the head matrix index
     float joint_length = 0;
 };
+struct HeadChain {
+    int16_t first_slot, preview_slot; // relative head slots differ in selection
+    uint8_t count;
+    std::array<uint32_t,8> nodes;
+    std::array<uint32_t,8> alternate_nodes{}; // authored detail/preview variants
+    std::array<float,9> basis{1,0,0,0,1,0,0,0,1}; // root-frame correction, column major
+};
 struct OutfitLayout {
     uint32_t head_addr = 0, head_node = 0, face_node = 0;
     int16_t face_slot = 0, preview_face_slot = 1;
@@ -22,7 +29,74 @@ struct OutfitLayout {
     // Exact native opaque nodes owned by this outfit. Shadow nodes are omitted.
     std::span<const uint32_t> owned_nodes;
     // Optional native cloth joints. Empty means source cloth stays head-local.
-    std::span<const PartBinding> head_cloth;
+    std::span<const HeadChain> head_cloth;
+};
+// Pai's two six-joint braids. Repeated mesh nodes require the matrix slot as
+// well as the node identity; using the last matching node joins both braids.
+inline constexpr HeadChain pai_cloth_0[] = {
+    {4,5,6,{0x415e0,0x415e0,0x415e0,0x415e0,0x415e0,0x415e8}},
+    {10,11,6,{0x415e0,0x415e0,0x415e0,0x415e0,0x415e0,0x415e8}},
+};
+inline constexpr HeadChain pai_cloth_1[] = {
+    {4,5,6,{0x5f818,0x5f818,0x5f818,0x5f818,0x5f828,0x5f820},{0,0,0,0,0x5f818}},
+    {10,11,6,{0x5f818,0x5f818,0x5f818,0x5f818,0x5f828,0x5f820},{0,0,0,0,0x5f818}},
+};
+// Native hair, beard, earrings and ribbon joints, traced in both scene layouts.
+inline constexpr HeadChain lau_cloth_0[] = {
+    {4,4,6,{0x416f0,0x416f0,0x416f0,0x416f0,0x416f0,0x416f8}},
+};
+inline constexpr HeadChain lau_cloth_1[] = {
+    {4,4,6,{0x4cc90,0x4cc90,0x4cc90,0x4cc90,0x4cc90,0x4cc98}},
+};
+inline constexpr HeadChain wolf_cloth_0[] = {
+    {4,5,3,{0x44e20,0x44e28,0x44e30}},
+};
+inline constexpr HeadChain wolf_cloth_1[] = {
+    {4,5,3,{0x50730,0x50738,0x50740}},
+};
+inline constexpr HeadChain jeffry_cloth_0[] = {
+    {4,4,2,{0x41770,0x41778}},
+    {6,6,2,{0x41770,0x41778}},
+    {8,8,2,{0x41770,0x41778}},
+    {10,10,2,{0x41770,0x41778}},
+    {12,12,2,{0x41770,0x41778}},
+    {14,14,2,{0x41770,0x41778}},
+};
+// Jeffry's alternate VF3 outfit has two bandana joints instead of six
+// locks. Their motion drives the six traced lock root frames independently.
+inline constexpr HeadChain jeffry_cloth_1[] = {
+    {4,5,1,{0x52f18},{},{0.8677584f,0.2905157f,0.4032320f,-0.3298540f,-0.2702187f,0.9045321f,-0.3717416f,0.9179229f,0.1386567f}},
+    {5,6,1,{0x52f18},{},{0.8899448f,0.4006980f,0.2178058f,-0.3183844f,0.8877879f,-0.3323613f,0.3265418f,-0.2264372f,-0.9176582f}},
+    {4,5,1,{0x52f18},{},{0.4589509f,-0.3324336f,0.8239247f,-0.8717336f,-0.3475987f,0.3453343f,0.1715944f,-0.8767343f,-0.4493242f}},
+    {5,6,1,{0x52f18},{},{0.4874546f,0.6220191f,0.6127645f,-0.6003298f,0.7483509f,-0.2820906f,0.6340286f,0.2303544f,-0.7382036f}},
+    {4,5,1,{0x52f18},{},{-0.5113527f,0.7670274f,0.3875401f,-0.6785314f,-0.6370994f,0.3656495f,-0.5273648f,0.0759822f,-0.8462347f}},
+    {5,6,1,{0x52f18},{},{-0.3756363f,0.7618015f,0.5277839f,-0.5709106f,0.2583911f,-0.7792914f,0.7300400f,0.5940476f,-0.3378595f}},
+};
+inline constexpr HeadChain kage_cloth_0[] = {
+    {17,13,8,{0x62860,0x62860,0x62868,0x62868,0x62870,0x62870,0x62878,0x62878}},
+    {9,5,8,{0x62860,0x62860,0x62868,0x62868,0x62870,0x62870,0x62878,0x62878}},
+};
+inline constexpr HeadChain kage_cloth_1[] = {
+    {4,5,5,{0x4db98,0x4dba0,0x4dba0,0x4dba8,0x4dba8}},
+    {14,15,5,{0x4db98,0x4dba0,0x4dba0,0x4dba8,0x4dba8}},
+};
+inline constexpr HeadChain sarah_cloth_0[] = {
+    {4,4,1,{0x45458}},
+    {5,5,1,{0x45458}},
+    {13,13,7,{0x71348,0x71350,0x71358,0x71358,0x71358,0x71368,0x71370}},
+};
+inline constexpr HeadChain sarah_cloth_1[] = {
+    {52,4,1,{0x51410}},
+    {53,5,1,{0x51410}},
+    {16,12,6,{0x4dc18,0x4dc18,0x4dc18,0x4dc18,0x4dc18,0x4cd20},{0x46110,0x46108,0x46100,0x4dc38,0x4dc38,0x0}},
+};
+inline constexpr HeadChain shun_cloth_0[] = {
+    {13,11,3,{0x4e7e8,0x4e7f0,0x4e800}},
+    {16,14,3,{0x4e7e8,0x4e7f0,0x4e800}},
+};
+inline constexpr HeadChain shun_cloth_1[] = {
+    {21,10,3,{0x4e8a8,0x4e8b0,0x4e8c0}},
+    {24,13,3,{0x4e8a8,0x4e8b0,0x4e8c0}},
 };
 struct FighterLayout {
     const char *name = "";
@@ -320,7 +394,7 @@ inline const std::array<FighterLayout,10> fighters = {{
             {0x403b0,79,860.16f},
             {0x40390,82,0.0f},
             {0x50900,0,0.0f},
-        }},{0x4de58,0x4de50},{25,49},634.88f,512.0f,348.16f,owned_1_0,{}},
+        }},{0x4de58,0x4de50},{25,49},634.88f,512.0f,348.16f,owned_1_0,pai_cloth_0},
         {0x0,0x51c70,0x52190,23,1,{{
             {0x449c0,-2,0.0f},
             {0x44978,72,0.0f},
@@ -335,7 +409,7 @@ inline const std::array<FighterLayout,10> fighters = {{
             {0x44908,85,860.16f},
             {0x44880,88,0.0f},
             {0x51c70,0,0.0f},
-        }},{0x50108,0x50100},{31,55},634.88f,512.0f,348.16f,owned_1_1,{}},
+        }},{0x50108,0x50100},{31,55},634.88f,512.0f,348.16f,owned_1_1,pai_cloth_1},
     }}},
     {"Lau",4,{{
         {0x0,0x508d8,0x508c8,10,1,{{
@@ -352,7 +426,7 @@ inline const std::array<FighterLayout,10> fighters = {{
             {0x406e0,72,901.12f},
             {0x406a8,75,0.0f},
             {0x508d8,0,0.0f},
-        }},{0x498e8,0x498e0},{18,42},757.76f,573.44f,491.52f,owned_2_0,{}},
+        }},{0x498e8,0x498e0},{18,42},757.76f,573.44f,491.52f,owned_2_0,lau_cloth_0},
         {0x0,0x52158,0x52148,10,1,{{
             {0x447a0,-2,0.0f},
             {0x44740,59,0.0f},
@@ -367,7 +441,7 @@ inline const std::array<FighterLayout,10> fighters = {{
             {0x446c0,72,901.12f},
             {0x44618,75,0.0f},
             {0x52158,0,0.0f},
-        }},{0x497f0,0x497e8},{18,42},757.76f,573.44f,491.52f,owned_2_1,{}},
+        }},{0x497f0,0x497e8},{18,42},757.76f,573.44f,491.52f,owned_2_1,lau_cloth_1},
     }}},
     {"Wolf",7,{{
         {0x0,0x50930,0x50920,8,1,{{
@@ -384,7 +458,7 @@ inline const std::array<FighterLayout,10> fighters = {{
             {0x42e58,70,901.12f},
             {0x42e38,73,0.0f},
             {0x50930,0,0.0f},
-        }},{0x4a670,0x4a668},{16,40},798.72f,614.4f,532.48f,owned_3_0,{}},
+        }},{0x4a670,0x4a668},{16,40},798.72f,614.4f,532.48f,owned_3_0,wolf_cloth_0},
         {0x0,0x514c8,0x514b8,28,1,{{
             {0x4b6d8,-2,0.0f},
             {0x4b668,77,0.0f},
@@ -399,7 +473,7 @@ inline const std::array<FighterLayout,10> fighters = {{
             {0x4b5f0,90,901.12f},
             {0x4ba30,93,0.0f},
             {0x514c8,0,0.0f},
-        }},{0x4a570,0x4a568},{36,60},798.72f,614.4f,532.48f,owned_3_1,{}},
+        }},{0x4a570,0x4a568},{36,60},798.72f,614.4f,532.48f,owned_3_1,wolf_cloth_1},
     }}},
     {"Jeffry",5,{{
         {0x0,0x508a8,0x50898,22,1,{{
@@ -416,7 +490,7 @@ inline const std::array<FighterLayout,10> fighters = {{
             {0x40290,84,901.12f},
             {0x40268,87,0.0f},
             {0x508a8,0,0.0f},
-        }},{0x4a938,0x4a930},{30,54},819.2f,614.4f,491.52f,owned_4_0,{}},
+        }},{0x4a938,0x4a930},{30,54},819.2f,614.4f,491.52f,owned_4_0,jeffry_cloth_0},
         {0x0,0x51430,0x51420,7,1,{{
             {0x44548,-2,0.0f},
             {0x444c8,56,0.0f},
@@ -431,7 +505,7 @@ inline const std::array<FighterLayout,10> fighters = {{
             {0x44448,69,901.12f},
             {0x443c0,72,0.0f},
             {0x51430,0,0.0f},
-        }},{0x4a838,0x4a830},{15,39},819.2f,614.4f,491.52f,owned_4_1,{}},
+        }},{0x4a838,0x4a830},{15,39},819.2f,614.4f,491.52f,owned_4_1,jeffry_cloth_1},
     }}},
     {"Kage",3,{{
         {0x0,0x50958,0x50948,26,1,{{
@@ -448,7 +522,7 @@ inline const std::array<FighterLayout,10> fighters = {{
             {0x42718,88,901.12f},
             {0x42698,91,0.0f},
             {0x50958,0,0.0f},
-        }},{0x496f0,0x496d8},{34,58},757.76f,573.44f,491.52f,owned_5_0,{}},
+        }},{0x496f0,0x496d8},{34,58},757.76f,573.44f,491.52f,owned_5_0,kage_cloth_0},
         {0x0,0x51368,0x51358,46,1,{{
             {0x436f0,-2,0.0f},
             {0x43680,95,0.0f},
@@ -463,7 +537,7 @@ inline const std::array<FighterLayout,10> fighters = {{
             {0x43620,108,901.12f},
             {0x43598,111,0.0f},
             {0x51368,0,0.0f},
-        }},{0x495d0,0x495b8},{54,78},757.76f,573.44f,491.52f,owned_5_1,{}},
+        }},{0x495d0,0x495b8},{54,78},757.76f,573.44f,491.52f,owned_5_1,kage_cloth_1},
     }}},
     {"Sarah",2,{{
         {0x0,0x50c50,0x50c40,53,1,{{
@@ -480,7 +554,7 @@ inline const std::array<FighterLayout,10> fighters = {{
             {0x42a40,115,901.12f},
             {0x42a20,118,0.0f},
             {0x50c50,0,0.0f},
-        }},{0x4ab70,0x4ab68},{61,85},655.36f,512.0f,348.16f,owned_6_0,{}},
+        }},{0x4ab70,0x4ab68},{61,85},655.36f,512.0f,348.16f,owned_6_0,sarah_cloth_0},
         {0x0,0x51768,0x52200,181,1,{{
             {0x45ec0,-2,0.0f},
             {0x45e50,230,0.0f},
@@ -495,7 +569,7 @@ inline const std::array<FighterLayout,10> fighters = {{
             {0x45df0,243,901.12f},
             {0x45d50,246,0.0f},
             {0x51768,0,0.0f},
-        }},{0x4aa70,0x4aa68},{189,213},655.36f,512.0f,348.16f,owned_6_1,{}},
+        }},{0x4aa70,0x4aa68},{189,213},655.36f,512.0f,348.16f,owned_6_1,sarah_cloth_1},
     }}},
     {"Jacky",1,{{
         {0x0,0x50868,0x50858,35,1,{{
@@ -544,7 +618,7 @@ inline const std::array<FighterLayout,10> fighters = {{
             {0x42bb8,92,819.2f},
             {0x42b40,95,0.0f},
             {0x50e10,0,0.0f},
-        }},{0x4f3f8,0x4f3f0},{38,62},614.4f,491.52f,430.08f,owned_8_0,{}},
+        }},{0x4f3f8,0x4f3f0},{38,62},614.4f,491.52f,430.08f,owned_8_0,shun_cloth_0},
         {0x0,0x51480,0x51470,37,1,{{
             {0x44fe8,-2,0.0f},
             {0x44fb8,86,0.0f},
@@ -559,7 +633,7 @@ inline const std::array<FighterLayout,10> fighters = {{
             {0x44f60,99,819.2f},
             {0x44f00,102,0.0f},
             {0x51480,0,0.0f},
-        }},{0x4f2f8,0x4f2f0},{45,69},614.4f,491.52f,430.08f,owned_8_1,{}},
+        }},{0x4f2f8,0x4f2f0},{45,69},614.4f,491.52f,430.08f,owned_8_1,shun_cloth_1},
     }}},
     {"Lion",10,{{
         {0x0,0x50c20,0x50c10,4,1,{{

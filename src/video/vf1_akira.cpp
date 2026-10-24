@@ -213,6 +213,7 @@ bool Vf1Akira::load_assets(const vf1_models::Assets &assets, AkiraSource source,
 void Vf1Akira::load_faces(const vf1_models::Assets &assets)
 {
     source_faces=assets.face_frames;
+    faces_without_item=assets.faces_without_item;
     independent_blink=assets.independent_blink;
     face_frame_count=std::max(unsigned(source_faces.size()),assets.face_frame_count);
     decode_face=assets.decode_face;
@@ -221,6 +222,25 @@ void Vf1Akira::load_faces(const vf1_models::Assets &assets)
     face_speech=assets.face_speech;
     face_cache={};face_clock=0;
     static_head_accessory.reset();
+    detachable_head={};
+    if((roster_fighter==1 || roster_fighter==5) && !assets.detachable_head.empty()) {
+        for(unsigned outfit=0;outfit<2;++outfit) {
+            auto geometry=assets.detachable_head;
+            // VF3 attached ornament matrices, measured relative to the
+            // head in selection and battle. Keep the source cap/bow in its
+            // original head position, then let this native joint carry it
+            // through detachment, flight, floor contact and the next round.
+            const float x=roster_fighter==5 ? 204.8f : outfit ? -14.37645f : -4.096f;
+            const float z=roster_fighter==5 ? 204.8f : outfit ? 418.5088f : 429.056f;
+            const bool tilted=roster_fighter==1 && outfit;
+            const float sine=tilted ? -.138760f : 0.f,cosine=tilted ? .990326f : 1.f;
+            for(auto &t:geometry)for(auto &p:t.points) {
+                const Point q={p[0]*unit_scale-x,p[1]*unit_scale,p[2]*head_z_scale-z};
+                p={-q[1],sine*q[0]+cosine*q[2],-cosine*q[0]+sine*q[2]};
+            }
+            detachable_head[outfit]=convert(geometry,{Part(123),0,0,1,1,1,0,0},mesh_key_base,source_textures);
+        }
+    }
     if(!assets.head_accessory.empty()) {
         // Authored head-local attachments (such as VF2 Jacky's static hair)
         // share the head transform. Convert once and retain them in each cached
@@ -281,21 +301,24 @@ uint16_t Vf1Akira::expression_frame(const fighter_expression::Pose &pose) const
     return face_animation_frame(animation,pose.tick);
 }
 
-Meshes Vf1Akira::face_meshes(uint16_t frame) const
+Meshes Vf1Akira::face_meshes(uint16_t frame,bool without_item) const
 {
     const unsigned base=frame&vf1_models::face_variant::FrameMask;
     const unsigned blink=frame>>vf1_models::face_variant::BlinkShift;
-    if(!frame || base>=face_frame_count || blink>2 || (blink && !independent_blink))return parts[size_t(Part::Head)];
-    for(auto &entry:face_cache)if(entry.meshes && entry.frame==frame) {
+    without_item &= !faces_without_item.empty();
+    if((!frame && !without_item) || base>=face_frame_count || blink>2 || (blink && !independent_blink))return parts[size_t(Part::Head)];
+    const uint32_t cache_frame=frame|(without_item?0x10000u:0);
+    for(auto &entry:face_cache)if(entry.meshes && entry.frame==cache_frame) {
         entry.used=++face_clock;return entry.meshes;
     }
     // Each expression has a separate topology identity. Retained scenes own
     // their meshes even after this small conversion cache evicts a frame.
     const uint64_t key=0x5800000000000000ull | (uint64_t(model2_source?2:1)<<52) |
-        (uint64_t(roster_fighter)<<48);
+        (uint64_t(roster_fighter)<<48) | (uint64_t(without_item)<<47);
     const Binding binding={Part(frame),0,0,unit_scale,unit_scale,head_z_scale,head_z_offset,0};
     vf1_models::Mesh decoded;
-    const vf1_models::Mesh *geometry=frame<source_faces.size() ? &source_faces[frame] : nullptr;
+    const auto &bank=without_item ? faces_without_item : source_faces;
+    const vf1_models::Mesh *geometry=frame<bank.size() ? &bank[frame] : nullptr;
     if(!geometry || geometry->empty()) {
         if(!decode_face)return parts[size_t(Part::Head)];
         try {decoded=decode_face(frame);} catch(const std::exception &) {return parts[size_t(Part::Head)];}
@@ -306,7 +329,7 @@ Meshes Vf1Akira::face_meshes(uint16_t frame) const
     auto meshes=convert(*geometry,binding,key,source_textures);
     if(static_head_accessory)
         meshes->insert(meshes->end(),static_head_accessory->begin(),static_head_accessory->end());
-    entry={frame,++face_clock,std::move(meshes)};
+    entry={cache_frame,++face_clock,std::move(meshes)};
     return entry.meshes;
 }
 
@@ -523,6 +546,9 @@ size_t Vf1Akira::apply_fighter(Scene &scene,unsigned outfit_mask,unsigned previe
         if(!((outfit_mask|preview_mask)&(1u<<outfit)))continue;
         const auto &layout=fighter.outfits[outfit];
         if(!layout.head_node)continue;
+        const uint32_t item_node=roster_fighter==1 ? (outfit?0x5f808u:0x41768u)
+                                : roster_fighter==5 ? (outfit?0x512d0u:0x46238u) : 0;
+        bool item_attached=false;
         for(auto &head_vp:scene.viewports)for(auto &head:head_vp.models) {
             if(head.source_node!=layout.head_node || (layout.head_addr && head.addr!=layout.head_addr))continue;
             const int base=head.matrix_index;
@@ -576,21 +602,47 @@ size_t Vf1Akira::apply_fighter(Scene &scene,unsigned outfit_mask,unsigned previe
             if(invalid)continue;
             Mat4 inverse_head;
             if(!inverse(head.matrix,inverse_head))continue;
-            auto with_hair=face_meshes(face_frames[outfit]);
+            // VF1 Kage embeds the attached plate in the head. Only switch
+            // to its native bare fixed-head variant when the item joint leaves
+            // the forehead; expression changes must not bring the plate back.
+            item_attached=preview;
+            if(item_node)for(const auto &v:scene.viewports)if(same_camera(v))for(const auto &m:v.models)
+                if(m.source_node==item_node) {
+                    const auto p=transform(inverse_head,{m.matrix.m[12],m.matrix.m[13],m.matrix.m[14]});
+                    const float x=roster_fighter==5?204.8f:outfit?-14.37645f:-4.096f;
+                    const float z=roster_fighter==5?204.8f:outfit?418.5088f:429.056f;
+                    item_attached |= std::abs(p[0]-x)<3 && std::abs(p[1])<3 && std::abs(p[2]-z)<3;
+                }
+            auto with_hair=face_meshes(face_frames[outfit],!item_attached);
             if(!ribbons.empty()) {
                 with_hair=std::make_shared<std::vector<Mesh>>(*with_hair);
                 vf1_models::Mesh hair;
                 for(size_t chain_index=0;chain_index<ribbons.size();++chain_index) {
                     const auto &chain=ribbons[chain_index];
                     Point anchor={chain.anchor[0]*2048,chain.anchor[1]*2048,-chain.anchor[2]*2048};
+                    Point down=chain.rest_direction,thickness={1,0,0},width={0,1,0};
                     for(size_t segment=0;segment<chain.segments.size();++segment) {
-                        Point down=chain.rest_direction,thickness={1,0,0},width={0,1,0};
-                        if(!layout.head_cloth.empty()) {
-                            const auto &binding=layout.head_cloth[std::min(layout.head_cloth.size()-1,
-                                (chain_index*chain.segments.size()+segment)*layout.head_cloth.size()/(ribbons.size()*chain.segments.size()))];
-                            for(auto &v:scene.viewports)if(same_camera(v))for(auto &m:v.models)if(m.source_node==binding.node) {
+                        // VF1 Sarah has only the ponytail, while VF2 prepends
+                        // two earrings. Jeffry's VF1 locks sample the six native
+                        // VF3 roots rather than collapsing onto adjacent roots.
+                        const size_t binding_index=roster_fighter==6 && !model2_source ? 2
+                            : roster_fighter==4 && !model2_source ? chain_index*2 : chain_index;
+                        if(binding_index<layout.head_cloth.size()) {
+                            const auto &binding=layout.head_cloth[binding_index];
+                            const size_t joint=segment*binding.count/chain.segments.size();
+                            const int slot=base+(preview?binding.preview_slot:binding.first_slot)+int(joint);
+                            // A culled tip retains its preceding segment's basis.
+                            // Never read a different braid just because it uses
+                            // the same polygon node.
+                            for(auto &v:scene.viewports)if(same_camera(v))for(auto &m:v.models)
+                              if(int(m.matrix_index)==slot && (m.source_node==binding.nodes[joint] ||
+                                 (binding.alternate_nodes[joint] && m.source_node==binding.alternate_nodes[joint]))) {
                                 auto local_axis=[&](unsigned col) {
-                                    Point p{};const auto direction=axis(m.matrix,int(col));
+                                    Point p{},direction{};
+                                    for(unsigned j=0;j<3;++j) {
+                                        const auto native_axis=axis(m.matrix,int(j));
+                                        for(unsigned k=0;k<3;++k)direction[k]+=native_axis[k]*binding.basis[col*3+j];
+                                    }
                                     for(unsigned r=0;r<3;++r)for(unsigned c=0;c<3;++c)p[r]+=inverse_head.m[c*4+r]*direction[c];
                                     const float length=std::sqrt(p[0]*p[0]+p[1]*p[1]+p[2]*p[2]);
                                     if(length>1e-8f)for(auto &x:p)x/=length;
@@ -632,7 +684,24 @@ size_t Vf1Akira::apply_fighter(Scene &scene,unsigned outfit_mask,unsigned previe
                 const unsigned pose=fingers ? unsigned(std::lround(31*std::clamp((openness/fingers+.65f)/1.65f,0.f,1.f))) : 0;
                 wrists[side]->meshes=hands[side][pose];
             }
+            if(detachable_head[outfit])for(auto &v:scene.viewports)if(same_camera(v))for(auto &m:v.models) {
+                if(m.source_node==item_node)m.meshes=item_attached && !faces_without_item.empty() ? empty : detachable_head[outfit];
+                if(roster_fighter==1 && outfit && m.source_node==0x5f810)m.meshes=empty;
+            }
             ++replaced;
+        }
+        // A fallen ornament can remain on screen while the head is culled.
+        // Recognise the matching battle body before replacing that draw; a
+        // head-only selection still requires its explicit preview mask.
+        if(detachable_head[outfit] && (outfit_mask&(1u<<outfit))) {
+            bool body=false;
+            for(const auto &v:scene.viewports)for(const auto &m:v.models)
+                for(size_t part=0;part<size_t(Part::Head);++part)
+                    body |= m.source_node==layout.parts[part].node;
+            if(body)for(auto &v:scene.viewports)for(auto &m:v.models) {
+                if(m.source_node==item_node)m.meshes=item_attached && !faces_without_item.empty() ? empty : detachable_head[outfit];
+                if(roster_fighter==1 && outfit && m.source_node==0x5f810)m.meshes=empty;
+            }
         }
     }
     return replaced;

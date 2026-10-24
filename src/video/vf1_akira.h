@@ -30,8 +30,8 @@ private:
     size_t apply_fighter(Scene &, unsigned outfit_mask, unsigned preview_mask,
                          const std::array<uint16_t,2> &) const;
     void load_faces(const vf1_models::Assets &);
-    Meshes face_meshes(uint16_t frame) const;
-    std::vector<vf1_models::Mesh> source_faces;
+    Meshes face_meshes(uint16_t frame, bool without_item=false) const;
+    std::vector<vf1_models::Mesh> source_faces, faces_without_item;
     std::vector<std::shared_ptr<const Model2Texture>> source_textures;
     unsigned face_frame_count=0;
     bool independent_blink=false;
@@ -40,7 +40,8 @@ private:
     std::array<uint16_t,3> face_states{};
     std::vector<uint16_t> face_speech;
     Meshes static_head_accessory;
-    struct FaceCacheEntry {uint16_t frame=0; uint64_t used=0; Meshes meshes;};
+    std::array<Meshes,2> detachable_head;
+    struct FaceCacheEntry {uint32_t frame=0; uint64_t used=0; Meshes meshes;};
     mutable std::array<FaceCacheEntry,4> face_cache{};
     mutable uint64_t face_clock=0;
     unsigned roster_fighter=0;

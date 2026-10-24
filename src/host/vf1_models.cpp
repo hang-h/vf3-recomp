@@ -3,6 +3,7 @@
 #include "rom_zip.h"
 #include <cmath>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <utility>
 
@@ -244,6 +245,49 @@ bool load(const std::string &path, Assets &out, std::string &error, unsigned fig
         prepared.face_states[2]=add_face(closed);
         if (!prepared.face_animations[1].frames.empty())
             prepared.face_states[1]=prepared.face_animations[1].frames.back();
+        if (fighter==1) {
+            // Pai's first fixed-head list contains capped and uncapped heads.
+            // The latter is an exact subset: separate only the cap polygons,
+            // so expressions cannot restore it after the native ornament falls.
+            Mesh capped,uncapped;
+            const auto list=d.word(lists);
+            d.part(capped,d.word(list));d.part(uncapped,d.word(list+4));
+            using key=std::pair<uint32_t,decltype(Triangle::points)>;
+            std::set<key> bare,cap;
+            for(const auto &t:uncapped)bare.emplace(t.colour,t.points);
+            for(const auto &t:capped) {
+                if(bare.erase({t.colour,t.points}))continue;
+                cap.emplace(t.colour,t.points);prepared.detachable_head.push_back(t);
+            }
+            if(!bare.empty() || cap.empty())throw std::runtime_error("invalid VF1 Pai cap variants");
+            auto remove_cap=[&](Mesh &mesh) {
+                std::erase_if(mesh,[&](const auto &t){return cap.contains({t.colour,t.points});});
+            };
+            remove_cap(head);
+            for(auto &face:prepared.face_frames)remove_cap(face);
+        }
+        if(fighter==5) {
+            // Kage's native knockdown switches fixed-head component zero to
+            // its second descriptor (ffD3B1). Unlike Pai, these are different
+            // meshes, not a subset; preserve the hood and masked mouth.
+            Mesh covered,bare;
+            const auto list=d.word(lists);
+            d.part(covered,d.word(list));d.part(bare,d.word(list+4));
+            using key=std::pair<uint32_t,decltype(Triangle::points)>;
+            std::set<key> fixed;
+            for(const auto &t:covered)fixed.emplace(t.colour,t.points);
+            for(auto face:prepared.face_frames) {
+                std::erase_if(face,[&](const auto &t){return fixed.contains({t.colour,t.points});});
+                face.insert(face.end(),bare.begin(),bare.end());
+                prepared.faces_without_item.push_back(std::move(face));
+            }
+            // The source item record supplies the falling plate. Its axes are
+            // item-local; place it at the source forehead before retargeting.
+            const auto items=d.word(record+0x56);
+            d.part(prepared.detachable_head,d.word(items+4));
+            for(auto &t:prepared.detachable_head)for(auto &p:t.points)
+                p={p[2]+.105f,-p[0],-p[1]-.151f};
+        }
         for (size_t side = 0; side < 2; ++side) {
             const uint32_t table = d.word(record + (side ? 0x5e : 0x62));
             for (size_t pose = 0; pose < 32; ++pose)

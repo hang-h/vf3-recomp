@@ -116,6 +116,10 @@ int main(int argc, char **argv)
         for(unsigned fighter=0;fighter<10;++fighter) {
             vf1_models::Assets roster;
             require(vf2_models::load(argv[1],roster,error,fighter,false),std::string(names[fighter])+": "+error);
+            require(roster.detachable_head.empty()==(fighter!=1 && fighter!=5),"incorrect source item ownership");
+            require(roster.faces_without_item.empty(),"VF2 separate item replaced the face bank");
+            for(const auto &t:roster.detachable_head)for(const auto &p:t.points)for(float x:p)
+                require(std::isfinite(x) && std::abs(x)<1,"invalid item attachment");
             require(roster.portrait.available() && roster.portrait.width==48 && roster.portrait.height==88,
                     std::string(names[fighter])+": missing original select portrait");
             require(portraits.insert(roster.portrait.pixels).second,"fighter reused another portrait");
