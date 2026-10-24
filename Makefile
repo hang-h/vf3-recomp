@@ -78,6 +78,10 @@ $(BIN)/fighter-expression-check: $(call objs,$(CORE) src/host/vf1_models.cpp src
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
+$(BIN)/pai-victory-check: $(call objs,$(CORE) src/host/vf1_models.cpp src/host/vf2_models.cpp src/video/vf1_akira.cpp tools/models/pai-victory-check.cpp) $(SLJIT_OBJ)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+
 $(BIN)/akira-selection-check: $(call objs,$(CORE) src/host/vf1_models.cpp src/host/vf2_models.cpp src/video/vf1_akira.cpp src/video/vf2_akira.cpp tools/models/akira-selection-check.cpp) $(SLJIT_OBJ)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)

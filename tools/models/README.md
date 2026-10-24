@@ -773,4 +773,21 @@ Verification uses local player ROMs only:
   with the restored bow and animated braids. The simulator uses its CPU fallback;
   physical-device runtime validation remains outstanding.
 
+Pai's baked speech faces also occur during non-perfect victories. They have
+different node identities from the live morph and hurt faces, and their matrix
+offset changes with detail culling. Both outfits now include these nodes in
+their ownership lists, so VF1/VF2 heads remain visible throughout speech.
+
+`pai-victory-check` exercises this path on Taka-Arashi's stage, on every victory
+frame, for both source appearances. Run buttons 0 (punch) and 1 (kick) with
+outfits 0 and 1. The isolated test changes the stage-picker table and starting
+health to reach a non-perfect KO; the application does not make these changes.
+It requires all four baked faces to appear and be suppressed, and verifies that
+unselected opponent models remain unchanged.
+
+```sh
+make build/bin/pai-victory-check
+build/bin/pai-victory-check /path/to/vf3.zip /path/to/vf.zip /path/to/vf2.zip build/pai-victory 1 0
+```
+
 ROMs, extracted geometry, textures and replay captures are not distributed.
