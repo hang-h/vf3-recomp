@@ -135,6 +135,19 @@ int main(int argc,char **argv)
                     require(!a.decode_face(frame).empty(),"costume facial frame missing");
                 if(source==2 && fighter==5)
                     require(a.detachable_head.empty()==bool(outfit),"Kage costume item policy lost");
+                if(source==2 && fighter==1 && outfit==1) {
+                    // The alternate cap lies across the crown. Applying the
+                    // default bow's axes makes its front/back span vertical.
+                    require(!a.detachable_head.empty(),"Pai alternate cap missing");
+                    std::array<float,3> lo={10,10,10},hi={-10,-10,-10};
+                    for(const auto &t:a.detachable_head)for(const auto &p:t.points)
+                        for(unsigned axis=0;axis<3;++axis) {
+                            lo[axis]=std::min(lo[axis],p[axis]);
+                            hi[axis]=std::max(hi[axis],p[axis]);
+                        }
+                    require(hi[2]-lo[2]<hi[0]-lo[0] && hi[2]-lo[2]<hi[1]-lo[1],
+                            "Pai alternate cap stands upright instead of covering the crown");
+                }
             }
             for(unsigned state=0;state<4;++state) {
                 fighter_expression::Poses poses{};

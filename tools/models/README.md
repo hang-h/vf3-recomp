@@ -817,6 +817,17 @@ Kage's alternate costume has no detachable plate; Lion's alternate ribbons
 attach to upper-arm bone 6. Its ribbons follow that arm in their source rest
 shape, without a separate source cloth simulation.
 
+Pai's VF2 alternate cap uses different attachment axes from her default bow.
+A native mirror replay measured head-relative basis columns `(-Y,-X,-Z)`
+for the bow and `(-Y,-Z,+X)` for the cap in 212 attached samples. Applying
+the bow basis to both costumes stood the cap upright. The decoder now uses
+the cap basis for the alternate costume, retaining the ROM attachment offset
+and VF3's existing detachment motion. REA controlled-replay evidence:
+`ev_acaaf5e293966519fec2d146a2f2ff8f7e0584dda8f98c64f1bad57427068486`.
+The costume regression checks that the cap lies across the crown; Pai render
+checks cover both destination outfits, confirmation, fighting and simulated
+item detachment. Local captures remain under ignored `build/pai-cap`.
+
 Local verification (no ROM-derived fixtures are checked in):
 
 ```sh

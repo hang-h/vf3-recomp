@@ -805,14 +805,16 @@ bool load(const std::string &path,vf1_models::Assets &out,std::string &error,uns
         const auto item=d.word(Main,record+0x380)&0xffffff;
         if((fighter==1 || fighter==5) && d.word(Main,item)) {
             // Kage P2 and the other fighters have an empty native item record.
-            // Pai's bow and Kage's plate have different attached orientations.
+            // Pai P1's bow uses different attachment axes from her P2 cap.
+            // Native head-relative columns are (-Y,-X,-Z) for the bow and
+            // (-Y,-Z,+X) for the cap (also used by Kage's forehead plate).
             next.detachable_head=d.part(d.word(Main,item),3);
             float x,z;const auto xb=d.word(Main,item+16),zb=d.word(Main,item+24);
             memcpy(&x,&xb,4);memcpy(&z,&zb,4);
             if(!std::isfinite(x)||!std::isfinite(z)||std::abs(x)>1||std::abs(z)>1)
                 throw std::runtime_error("invalid VF2 item attachment");
             for(auto &t:next.detachable_head)for(auto &p:t.points)
-                p=fighter==1 ? std::array<float,3>{-p[1]+x,-p[0],-p[2]+z}
+                p=fighter==1 && outfit==0 ? std::array<float,3>{-p[1]+x,-p[0],-p[2]+z}
                              : std::array<float,3>{p[2]+x,-p[0],-p[1]+z};
         }
         // Original manga-style select icon. The six-by-eleven tile image is
